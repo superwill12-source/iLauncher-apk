@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 8
-                  versionName = "2.6"
+                  versionCode = 10
+                  versionName = "2.8"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -250,9 +250,9 @@ jobs:
                   val p = pkg.lowercase()
                   val l = label.lowercase()
                   
-                  val smsPkgs = listOf("messaging", ".mms", ".sms", "textra", "com.android.messaging")
+                  val smsPkgs = listOf("messag", "sms", "mms", "textra", "chomp", "handcent")
                   val isSms = smsPkgs.any { p.contains(it) } || 
-                              l == "mensagens" || l == "messages" || l == "sms" || l == "mensagem"
+                              l.contains("mensag") || l.contains("messages") || l.contains("sms") || l.contains("mensagem")
                   
                   return when {
                       p.contains("dialer") || p.endsWith(".phone") || l == "telefone" || l == "phone" -> "phone"
@@ -382,25 +382,36 @@ jobs:
                   return out
               }
 
+              // ======================= CORREÇÃO DO TAMANHO DO ÍCONE =======================
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
+
+                  c.save()
+                  // O Android deixa uma margem de ~15% ao redor dos ícones (Safe Zone).
+                  // Aplicamos um zoom de 1.15x para fazer a arte preencher todo o squircle,
+                  // ficando exatamente do mesmo tamanho dos ícones nativos do iOS.
+                  val zoom = 1.15f
+                  c.scale(zoom, zoom, 128f, 128f)
+
                   if (b is AdaptiveIconDrawable) {
-                      val big = 384
-                      val off = (256 - big) / 2
+                      // Desenha o fundo e a frente sem a máscara padrão do Android
                       b.background?.let {
-                          it.setBounds(off, off, off + big, off + big)
+                          it.setBounds(0, 0, 256, 256)
                           it.draw(c)
                       }
                       b.foreground?.let {
-                          it.setBounds(off, off, off + big, off + big)
+                          it.setBounds(0, 0, 256, 256)
                           it.draw(c)
                       }
                   } else {
-                      b.setBounds(16, 16, 240, 240)
+                      // Ícones antigos (não adaptativos) também ganham o zoom
+                      b.setBounds(0, 0, 256, 256)
                       b.draw(c)
                   }
+                  c.restore()
               }
+              // ==========================================================================
 
               private fun phone(c: Canvas) {
                   gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
@@ -806,7 +817,7 @@ jobs:
                   dock = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER
-                      setPadding(dp(8), dp(12), dp(8), dp(12))
+                      setPadding(dp(16), dp(12), dp(16), dp(12))
                       background = rounded(0x55FFFFFF, dp(34))
                   }
                   column.addView(dock, LinearLayout.LayoutParams(MATCH, WRAP).apply {
@@ -862,9 +873,6 @@ jobs:
                   super.onResume()
                   dismissLaunch(true)
                   refresh()
-                  // Reset de segurança: se o app for aberto no meio da animação de toque,
-                  // a view original pode ficar com a escala reduzida. Aqui garantimos que
-                  // todos os ícones voltem ao tamanho normal (1f).
                   resetAllIconScales()
                   resetDockIcons()
                   if (loaded) {
@@ -1269,13 +1277,13 @@ jobs:
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
-                              view.animate().scaleX(0.88f).scaleY(0.88f).setDuration(90)
+                              view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100)
                                   .setInterpolator(DecelerateInterpolator()).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                               view.animate().cancel()
-                              view.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                                  .setInterpolator(OvershootInterpolator(2.5f)).start()
+                              view.animate().scaleX(1f).scaleY(1f).setDuration(200)
+                                  .setInterpolator(OvershootInterpolator(1.5f)).start()
                           }
                       }
                       false
@@ -1535,24 +1543,49 @@ jobs:
                   return root
               }
 
+              // ================= DOCK (IPHONE STYLE) =================
               private fun buildDock() {
                   dock.removeAllViews()
+                  if (dockPkgs.isEmpty()) {
+                      dock.visibility = View.GONE
+                      return
+                  }
+                  dock.visibility = View.VISIBLE
+
+                  val dockIconSize = iconPx // Tamanho EXATO igual ao da tela inicial
+
                   for (pk in dockPkgs) {
                       val a = apps[pk] ?: continue
+                      
+                      // Container com espaçamento uniforme
                       val frame = FrameLayout(this)
-                      val iv = roundIcon(a.icon, iconPx)
+                      frame.layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
+
+                      // ImageView configurada para preencher o quadrado perfeitamente
+                      val iv = ImageView(this).apply {
+                          setImageDrawable(a.icon)
+                          scaleType = ImageView.ScaleType.FIT_XY
+                      }
+
                       pressable(iv)
-                      iv.setOnClickListener { launch(a, iv, iv) }
+                      
+                      iv.setOnClickListener {
+                          resetTouchState(iv)
+                          launch(a, iv, iv)
+                      }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                          resetTouchState(iv)
                           appMenu(a.pkg, Where.DOCK)
                           true
                       }
-                      frame.addView(iv, FrameLayout.LayoutParams(iconPx, iconPx, Gravity.CENTER))
-                      dock.addView(frame, LinearLayout.LayoutParams(0, WRAP, 1f))
+
+                      // Centraliza a imagem no frame, garantindo que não encolha
+                      frame.addView(iv, FrameLayout.LayoutParams(dockIconSize, dockIconSize, Gravity.CENTER))
+                      dock.addView(frame)
                   }
-                  dock.visibility = if (dockPkgs.isEmpty()) View.GONE else View.VISIBLE
               }
+              // =====================================================================
 
               private fun updateDots(selected: Int) {
                   val total = homePages.size + 2
@@ -1717,10 +1750,8 @@ jobs:
                               return
                           }
                           try {
-                              // Frequência
                               freqView.text = readCurrentCpuFreq()
                               
-                              // CPU Temp (HPM -> Sysfs fallback)
                               var cpuTemp = readCpuTempHpm()
                               if (cpuTemp == null) cpuTemp = readCpuTempSysfs()
                               
@@ -1732,7 +1763,6 @@ jobs:
                                   tempView.setTextColor(0xFFBBBBBB.toInt())
                               }
                               
-                              // Bateria Temp
                               val batTemp = readBatteryTemp()
                               if (batTemp != null) {
                                   batTempView.text = "Bateria: %.1f°C".format(batTemp)
