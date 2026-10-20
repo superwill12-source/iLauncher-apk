@@ -62,8 +62,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 3
-                  versionName = "2.1"
+                  versionCode = 4
+                  versionName = "2.2"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -252,7 +252,8 @@ jobs:
                   val l = label.lowercase()
                   return when {
                       p.contains("dialer") || p.endsWith(".phone") || l == "telefone" || l == "phone" -> "phone"
-                      p.contains("mms") || p.contains("messaging") || l == "mensagens" || l == "messages" || l == "sms" -> "messages"
+                      p.contains("messag") || p.contains("sms") || p.contains("mms") || p.contains("text") || p.contains("chat") ||
+                          l.contains("mensag") || l.contains("message") || l.contains("sms") || l.contains("chat") -> "messages"
                       p.contains("camera") || l == "câmera" || l == "camera" -> "camera"
                       p == "com.android.settings" || l == "configurações" || l == "settings" || l == "ajustes" -> "settings"
                       p.contains("clock") || l == "relógio" || l == "clock" -> "clock"
@@ -306,13 +307,6 @@ jobs:
               private fun stamp(): Long =
                   if (kind == "clock" || kind == "calendar") System.currentTimeMillis() / 60000L else 0L
 
-              // Pode ser chamado fora da thread principal para pre-renderizar o icone
-              fun prepare() {
-                  val r = render()
-                  cache = r
-                  cacheStamp = stamp()
-              }
-
               override fun draw(canvas: Canvas) {
                   val cached = cache
                   val st = stamp()
@@ -360,8 +354,6 @@ jobs:
               }
 
               private fun render(): Bitmap {
-                  // RGB_565 (2 bytes/px) economiza ~73 KB por icone no bitmap intermediario,
-                  // que e totalmente opaco e descartado logo depois.
                   val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.RGB_565)
                   val c = Canvas(raw)
                   c.scale(SIZE / 256f, SIZE / 256f)
@@ -407,7 +399,9 @@ jobs:
                           it.draw(c)
                       }
                   } else {
-                      b.setBounds(34, 34, 222, 222)
+                      // Fix: desenha o ícone original um pouco maior (16..240) 
+                      // para não parecer "encolhido" dentro do squircle branco.
+                      b.setBounds(16, 16, 240, 240)
                       b.draw(c)
                   }
               }
@@ -872,11 +866,6 @@ jobs:
                   super.onResume()
                   dismissLaunch(true)
                   refresh()
-                  // Fix: reseta icones do dock (que NAO fazem parte do pager,
-                  // portanto nao eram afetados pelo notifyDataSetChanged) e
-                  // forca rebind das paginas, limpando qualquer estado de escala/
-                  // alpha preso pela animacao de toque interrompida quando o
-                  // usuario abriu um app no meio dela.
                   resetDockIcons()
                   if (loaded) {
                       pager.postDelayed({
@@ -1158,10 +1147,6 @@ jobs:
               }
 
               private fun launch(a: AppItem, anchor: View?, animated: View? = null) {
-                  // Fix: reseta qualquer animacao de escala/alpha pendente ANTES
-                  // de criar o overlay. Isso evita que a view de origem fique
-                  // "presa" em escala < 1 quando o app abre no meio da animacao
-                  // de toque (causa do icone de mensagens parecer menor).
                   resetTouchState(animated ?: anchor)
 
                   val opts = ActivityOptions.makeCustomAnimation(
@@ -1616,21 +1601,22 @@ jobs:
                   val cores = mutableListOf<LongArray>()
                   try {
                       val f = File("/proc/stat")
-                      if (!f.canRead()) return CpuStat(null, cores)
-                      f.bufferedReader().use { br ->
-                          while (true) {
-                              val line = br.readLine() ?: break
-                              if (!line.startsWith("cpu")) break
-                              val parts = line.trim().split(Regex("\\s+"))
-                              // user nice system idle iowait irq softirq steal
-                              val v = LongArray(8)
-                              for (i in 0 until minOf(8, parts.size - 1)) {
-                                  v[i] = parts[i + 1].toLongOrNull() ?: 0L
-                              }
-                              if (line.length == 4 || !line[3].isDigit()) {
-                                  overall = v
-                              } else {
-                                  cores.add(v)
+                      if (f.canRead()) {
+                          f.bufferedReader().use { br ->
+                              while (true) {
+                                  val line = br.readLine() ?: break
+                                  if (!line.startsWith("cpu")) break
+                                  val parts = line.trim().split(Regex("\\s+"))
+                                  if (parts.size < 8) continue
+                                  val v = LongArray(8)
+                                  for (i in 0 until 8) {
+                                      v[i] = parts[i + 1].toLongOrNull() ?: 0L
+                                  }
+                                  if (parts[0] == "cpu") {
+                                      overall = v
+                                  } else {
+                                      cores.add(v)
+                                  }
                               }
                           }
                       }
@@ -1659,8 +1645,12 @@ jobs:
                               if (!typeF.exists() || !tempF.exists()) continue
                               val type = typeF.readText().trim()
                               val raw = tempF.readText().trim().toLongOrNull() ?: continue
-                              val celsius = if (raw > 1000) raw / 1000f else raw.toFloat()
-                              if (celsius in 1f..200f) {
+                              var celsius = if (raw > 1000) raw / 1000f else raw.toFloat()
+                              // Se estiver entre 105 e 212, provavelmente é Fahrenheit
+                              if (celsius > 105f && celsius < 212f) {
+                                  celsius = (celsius - 32f) * 5f / 9f
+                              }
+                              if (celsius in 10f..105f) {
                                   out.add(type to celsius)
                               }
                           } catch (_: Exception) {
@@ -1672,6 +1662,7 @@ jobs:
               }
 
               private fun updateCoreBars(box: LinearLayout, prev: List<LongArray>?, curr: List<LongArray>) {
+                  if (curr.isEmpty()) return
                   if (box.childCount != curr.size) {
                       box.removeAllViews()
                       for (i in curr.indices) {
@@ -1747,7 +1738,14 @@ jobs:
                           }
                           try {
                               val now = readCpuStat()
-                              if (prev != null && prev!!.overall != null && now.overall != null) {
+                              if (now.overall == null) {
+                                  overallView.text = "Restrito"
+                                  tempView.text = "Temp: —"
+                                  updateCoreBars(coresBox, null, emptyList())
+                                  handler.postDelayed(this, 5000)
+                                  return
+                              }
+                              if (prev != null && prev!!.overall != null) {
                                   val pct = computeCpuPct(prev!!.overall!!, now.overall!!)
                                   overallView.text = "$pct%"
                                   updateCoreBars(coresBox, prev!!.cores, now.cores)
