@@ -288,20 +288,36 @@ jobs:
 
               private val SIZE = 192
               private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+              @Volatile
               private var cache: Bitmap? = null
-              private var cacheKey = ""
+
+              @Volatile
+              private var cacheStamp = -1L
 
               override fun getIntrinsicWidth() = SIZE
               override fun getIntrinsicHeight() = SIZE
 
+              private fun stamp(): Long =
+                  if (kind == "clock" || kind == "calendar") System.currentTimeMillis() / 60000L else 0L
+
+              // Pode ser chamado fora da thread principal para pre-renderizar o icone
+              fun prepare() {
+                  val r = render()
+                  cache = r
+                  cacheStamp = stamp()
+              }
+
               override fun draw(canvas: Canvas) {
-                  val key = if (kind == "clock" || kind == "calendar") {
-                      SimpleDateFormat("yyyyMMddHHmm", Locale.US).format(Date())
-                  } else kind
                   val cached = cache
-                  val b = if (cached != null && key == cacheKey) cached else render().also {
-                      cache = it
-                      cacheKey = key
+                  val st = stamp()
+                  val b = if (cached != null && st == cacheStamp) {
+                      cached
+                  } else {
+                      val r = render()
+                      cache = r
+                      cacheStamp = st
+                      r
                   }
                   canvas.drawBitmap(b, null, bounds, paint)
               }
@@ -339,7 +355,11 @@ jobs:
               }
 
               private fun render(): Bitmap {
-                  val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+                  // Fix: RGB_565 (2 bytes/px) em vez de ARGB_8888 (4 bytes/px) no
+                  // bitmap intermediario. O bitmap "raw" e totalmente opaco (sempre
+                  // desenhamos gradient/drawColor por cima da area inteira) e e
+                  // descartado logo depois; economiza ~73 KB por icone.
+                  val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.RGB_565)
                   val c = Canvas(raw)
                   c.scale(SIZE / 256f, SIZE / 256f)
                   when (kind) {
@@ -699,9 +719,11 @@ jobs:
               private var rows = 5
               private var editing = false
               private var positioned = false
-              private var loaded = false
-              private var signature = ""
+              @Volatile private var loaded = false
+              @Volatile private var signature = ""
               private var maxPagerH = 0
+              private var refreshGen = 0
+              private val bg = java.util.concurrent.Executors.newSingleThreadExecutor()
               private var dragEntry: Entry? = null
               private var dragSource: View? = null
               private var lastFlip = 0L
@@ -737,12 +759,12 @@ jobs:
                   val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
                   pager = ViewPager2(this)
+                  (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
                   pager.setPageTransformer { page, position ->
                       val a = Math.min(Math.abs(position), 1f)
-                      page.alpha = 1f - 0.5f * a
-                      val sc = 1f - 0.08f * a
+                      val sc = 1f - 0.06f * a
                       page.scaleX = sc
                       page.scaleY = sc
                   }
@@ -750,6 +772,16 @@ jobs:
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
                           updatePill()
+                      }
+
+                      override fun onPageScrollStateChanged(state: Int) {
+                          val rv = pager.getChildAt(0) as? RecyclerView ?: return
+                          val layer = if (state != ViewPager2.SCROLL_STATE_IDLE && !editing) {
+                              View.LAYER_TYPE_HARDWARE
+                          } else {
+                              View.LAYER_TYPE_NONE
+                          }
+                          for (i in 0 until rv.childCount) rv.getChildAt(i).setLayerType(layer, null)
                       }
                   })
                   pager.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
@@ -819,6 +851,11 @@ jobs:
                   })
               }
 
+              override fun onDestroy() {
+                  super.onDestroy()
+                  bg.shutdown()
+              }
+
               override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
                   detector.onTouchEvent(ev)
                   return super.dispatchTouchEvent(ev)
@@ -828,7 +865,9 @@ jobs:
                   super.onResume()
                   dismissLaunch(true)
                   refresh()
-                  if (loaded) pager.adapter?.notifyItemChanged(0)
+                  // Fix: rebuild total apos voltar de um app para limpar
+                  // qualquer estado de animacao (escala/alpha) preso nos icones.
+                  if (loaded) pager.postDelayed({ pager.adapter?.notifyDataSetChanged() }, 300)
               }
 
               override fun onNewIntent(intent: Intent?) {
@@ -877,26 +916,42 @@ jobs:
               }
 
               private fun refresh() {
-                  val pm = packageManager
-                  val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                  val list = pm.queryIntentActivities(main, 0).filter { it.activityInfo.packageName != packageName }
-                  val m = LinkedHashMap<String, AppItem>()
-                  for (ri in list) {
-                      val pk = ri.activityInfo.packageName
-                      if (m.containsKey(pk)) continue
-                      m[pk] = AppItem(
-                          ri.loadLabel(pm).toString(),
-                          pk,
-                          Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                              .setClassName(pk, ri.activityInfo.name)
-                              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
-                          Icons.build(ri.loadLabel(pm).toString(), pk, ri.loadIcon(pm)),
-                          categoryOf(ri.activityInfo.applicationInfo, pk)
-                      )
+                  val gen = ++refreshGen
+                  bg.execute {
+                      try {
+                          val pm = packageManager
+                          val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                          val list = pm.queryIntentActivities(main, 0)
+                              .filter { it.activityInfo.packageName != packageName }
+                          if (list.isEmpty() && loaded) return@execute
+                          val sig = list.map { it.activityInfo.packageName }.distinct().sorted().joinToString("|")
+                          if (loaded && sig == signature) return@execute
+                          val m = LinkedHashMap<String, AppItem>()
+                          for (ri in list) {
+                              val pk = ri.activityInfo.packageName
+                              if (m.containsKey(pk)) continue
+                              val label = ri.loadLabel(pm).toString()
+                              val icon = Icons.build(label, pk, ri.loadIcon(pm))
+                              // Fix: nao chamar prepare() em todos os apps. O IosIcon
+                              // renderiza sob demanda no primeiro draw(); preparar todos
+                              // consumia ~147KB de bitmap por app e estourava a memoria.
+                              m[pk] = AppItem(
+                                  label,
+                                  pk,
+                                  Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                                      .setClassName(pk, ri.activityInfo.name)
+                                      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+                                  icon,
+                                  categoryOf(ri.activityInfo.applicationInfo, pk)
+                              )
+                          }
+                          runOnUiThread { if (gen == refreshGen) applyApps(m, sig) }
+                      } catch (_: Exception) {
+                      }
                   }
-                  if (m.isEmpty() && loaded) return
-                  val sig = m.keys.sorted().joinToString("|")
-                  if (loaded && sig == signature) return
+              }
+
+              private fun applyApps(m: LinkedHashMap<String, AppItem>, sig: String) {
                   signature = sig
                   apps = m
                   sorted = m.values.sortedBy { it.label.lowercase() }
@@ -991,6 +1046,10 @@ jobs:
                   val per = COLS * rows
                   homePages = home.chunked(per).ifEmpty { listOf(emptyList<Entry>()) }
                   pager.adapter?.notifyDataSetChanged()
+                  // Fix: manter apenas a pagina atual + vizinhas em memoria.
+                  // Antes ate 5 paginas extras ficavam vivas, multiplicando o
+                  // numero de views e bitmaps carregados.
+                  pager.offscreenPageLimit = 1
                   if (!positioned && loaded) {
                       pager.setCurrentItem(1, false)
                       positioned = true
@@ -1092,8 +1151,8 @@ jobs:
                   val big = resources.displayMetrics.widthPixels * 1.15f / v.width
                   iv.animate().scaleX(big).scaleY(big).setDuration(240)
                       .setInterpolator(DecelerateInterpolator(1.3f))
-                      .withEndAction { startApp(a, opts) }
                       .start()
+                  iv.postDelayed({ startApp(a, opts) }, 90)
                   iv.postDelayed({ if (launchOverlay === iv) dismissLaunch(true) }, 3000)
               }
 
@@ -1166,13 +1225,21 @@ jobs:
               }
 
               private fun pressable(v: View) {
+                  // Fix: cancela a animacao anterior antes de iniciar uma nova.
+                  // Sem isso, DOWN/UP rapidos deixavam a escala presa (ex.: 0.9)
+                  // quando a proxima animacao era enfileirada sobre a anterior.
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
-                          MotionEvent.ACTION_DOWN ->
-                              view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90).setInterpolator(DecelerateInterpolator()).start()
-                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                          MotionEvent.ACTION_DOWN -> {
+                              view.animate().cancel()
+                              view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90)
+                                  .setInterpolator(DecelerateInterpolator()).start()
+                          }
+                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                              view.animate().cancel()
                               view.animate().scaleX(1f).scaleY(1f).setDuration(280)
                                   .setInterpolator(OvershootInterpolator(2.5f)).start()
+                          }
                       }
                       false
                   }
@@ -1217,6 +1284,7 @@ jobs:
                           a.cancel()
                       }
                   })
+                  v.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                   if (v.isAttachedToWindow) a.start()
               }
 
@@ -1347,7 +1415,16 @@ jobs:
                               true
                           }
                           DragEvent.ACTION_DRAG_ENDED -> {
-                              dragSource?.alpha = 1f
+                              // Fix: quando o arraste e cancelado (sem drop),
+                              // o Android nao entrega ACTION_UP ao touch listener
+                              // do icone de origem; sem isso a view ficava com
+                              // alpha 0.3 e escala 0.9 (ou algum valor intermediario).
+                              dragSource?.let { src ->
+                                  src.alpha = 1f
+                                  src.animate().cancel()
+                                  src.scaleX = 1f
+                                  src.scaleY = 1f
+                              }
                               dragSource = null
                               dragEntry = null
                               true
@@ -1445,17 +1522,23 @@ jobs:
               }
 
               private fun updateDots(selected: Int) {
-                  dots.removeAllViews()
                   val total = homePages.size + 2
-                  for (i in 0 until total) {
-                      val d = View(this)
-                      d.background = GradientDrawable().apply {
-                          shape = GradientDrawable.OVAL
-                          setColor(if (i == selected) Color.WHITE else 0x66FFFFFF)
+                  if (dots.childCount != total) {
+                      dots.removeAllViews()
+                      for (i in 0 until total) {
+                          val d = View(this)
+                          d.background = GradientDrawable().apply {
+                              shape = GradientDrawable.OVAL
+                              setColor(0x66FFFFFF)
+                          }
+                          dots.addView(d, LinearLayout.LayoutParams(dp(7), dp(7)).apply {
+                              setMargins(dp(4), 0, dp(4), 0)
+                          })
                       }
-                      dots.addView(d, LinearLayout.LayoutParams(dp(7), dp(7)).apply {
-                          setMargins(dp(4), 0, dp(4), 0)
-                      })
+                  }
+                  for (i in 0 until total) {
+                      val bg = dots.getChildAt(i).background as GradientDrawable
+                      bg.setColor(if (i == selected) Color.WHITE else 0x66FFFFFF)
                   }
               }
 
@@ -1601,20 +1684,31 @@ jobs:
                   }
               }
 
-              private fun appRow(a: AppItem, where: Where): View {
-                  val row = LinearLayout(this).apply {
+              // Fix: aceita convert para reaproveitar a view do ListView (evita
+              // churn de views/GC — antes cada scroll criava novas fileiras).
+              private fun appRow(a: AppItem, where: Where, convert: View? = null): View {
+                  val row = (convert as? LinearLayout) ?: LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER_VERTICAL
                       setPadding(0, dp(6), 0, dp(6))
+                      val sz = dp(48)
+                      addView(
+                          ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.FIT_XY },
+                          LinearLayout.LayoutParams(sz, sz)
+                      )
+                      addView(
+                          TextView(this@MainActivity).apply {
+                              textSize = 17f
+                              setTextColor(Color.WHITE)
+                              setPadding(dp(14), 0, 0, 0)
+                          },
+                          LinearLayout.LayoutParams(0, WRAP, 1f)
+                      )
                   }
-                  val size = dp(48)
-                  row.addView(roundIcon(a.icon, size), LinearLayout.LayoutParams(size, size))
-                  row.addView(TextView(this).apply {
-                      text = a.label
-                      textSize = 17f
-                      setTextColor(Color.WHITE)
-                      setPadding(dp(14), 0, 0, 0)
-                  }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  val iv = row.getChildAt(0) as ImageView
+                  val tv = row.getChildAt(1) as TextView
+                  iv.setImageDrawable(a.icon)
+                  tv.text = a.label
                   row.setOnClickListener { launch(a, row) }
                   row.setOnLongClickListener {
                       appMenu(a.pkg, where)
@@ -1732,7 +1826,7 @@ jobs:
                       override fun getItem(p: Int): Any = shown[p]
                       override fun getItemId(p: Int) = p.toLong()
                       override fun getView(p: Int, convert: View?, parent: ViewGroup): View =
-                          appRow(shown[p], Where.LIBRARY)
+                          appRow(shown[p], Where.LIBRARY, convert)
                   }
                   list.adapter = adapter
 
@@ -1850,9 +1944,12 @@ jobs:
                   ov.alpha = 0f
                   panel.scaleX = 0.85f
                   panel.scaleY = 0.85f
+                  panel.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                   ov.animate().alpha(1f).setDuration(180).start()
                   panel.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                      .setInterpolator(OvershootInterpolator(1.1f)).start()
+                      .setInterpolator(OvershootInterpolator(1.1f))
+                      .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
+                      .start()
               }
 
               private fun closeGroup() {
@@ -1902,8 +1999,8 @@ jobs:
                       override fun getItem(p: Int): Any = p
                       override fun getItemId(p: Int) = p.toLong()
                       override fun getView(p: Int, convert: View?, parent: ViewGroup): View {
-                          if (p < shown.size) return appRow(shown[p], Where.SEARCH)
-                          val t = TextView(this@MainActivity)
+                          if (p < shown.size) return appRow(shown[p], Where.SEARCH, convert)
+                          val t = (convert as? TextView) ?: TextView(this@MainActivity)
                           t.text = "Pesquisar na web por “$webQuery”"
                           t.textSize = 16f
                           t.setTextColor(0xFF0A84FF.toInt())
