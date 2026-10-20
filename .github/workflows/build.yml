@@ -62,8 +62,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 2
-                  versionName = "2.0"
+                  versionCode = 3
+                  versionName = "2.1"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -99,6 +99,11 @@ jobs:
                       <data android:scheme="https" />
                   </intent>
                   <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+                  <intent><action android:name="android.intent.action.SHOW_ALARMS" /></intent>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.APP_CALENDAR" />
+                  </intent>
               </queries>
 
               <application
@@ -355,10 +360,8 @@ jobs:
               }
 
               private fun render(): Bitmap {
-                  // Fix: RGB_565 (2 bytes/px) em vez de ARGB_8888 (4 bytes/px) no
-                  // bitmap intermediario. O bitmap "raw" e totalmente opaco (sempre
-                  // desenhamos gradient/drawColor por cima da area inteira) e e
-                  // descartado logo depois; economiza ~73 KB por icone.
+                  // RGB_565 (2 bytes/px) economiza ~73 KB por icone no bitmap intermediario,
+                  // que e totalmente opaco e descartado logo depois.
                   val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.RGB_565)
                   val c = Canvas(raw)
                   c.scale(SIZE / 256f, SIZE / 256f)
@@ -628,7 +631,6 @@ jobs:
           import android.content.pm.ApplicationInfo
           import android.content.pm.PackageManager
           import android.graphics.Color
-          import android.graphics.Outline
           import android.graphics.Typeface
           import android.graphics.drawable.Drawable
           import android.graphics.drawable.GradientDrawable
@@ -636,7 +638,10 @@ jobs:
           import android.os.BatteryManager
           import android.os.Bundle
           import android.os.Environment
+          import android.os.Handler
+          import android.os.Looper
           import android.os.StatFs
+          import android.provider.AlarmClock
           import android.provider.MediaStore
           import android.provider.Settings
           import android.text.InputType
@@ -648,7 +653,6 @@ jobs:
           import android.view.MotionEvent
           import android.view.View
           import android.view.ViewGroup
-          import android.view.ViewOutlineProvider
           import android.view.animation.DecelerateInterpolator
           import android.view.animation.OvershootInterpolator
           import android.view.inputmethod.EditorInfo
@@ -669,6 +673,7 @@ jobs:
           import androidx.core.widget.doAfterTextChanged
           import androidx.recyclerview.widget.RecyclerView
           import androidx.viewpager2.widget.ViewPager2
+          import java.io.File
           import java.util.Date
           import java.util.Locale
 
@@ -679,6 +684,8 @@ jobs:
               val icon: Drawable,
               val category: String
           )
+
+          private data class CpuStat(val overall: LongArray?, val cores: List<LongArray>)
 
           private enum class Where { HOME, DOCK, FOLDER, LIBRARY, SEARCH }
 
@@ -865,9 +872,18 @@ jobs:
                   super.onResume()
                   dismissLaunch(true)
                   refresh()
-                  // Fix: rebuild total apos voltar de um app para limpar
-                  // qualquer estado de animacao (escala/alpha) preso nos icones.
-                  if (loaded) pager.postDelayed({ pager.adapter?.notifyDataSetChanged() }, 300)
+                  // Fix: reseta icones do dock (que NAO fazem parte do pager,
+                  // portanto nao eram afetados pelo notifyDataSetChanged) e
+                  // forca rebind das paginas, limpando qualquer estado de escala/
+                  // alpha preso pela animacao de toque interrompida quando o
+                  // usuario abriu um app no meio dela.
+                  resetDockIcons()
+                  if (loaded) {
+                      pager.postDelayed({
+                          pager.adapter?.notifyDataSetChanged()
+                          resetDockIcons()
+                      }, 300)
+                  }
               }
 
               override fun onNewIntent(intent: Intent?) {
@@ -887,6 +903,25 @@ jobs:
                       groupOverlay != null -> closeGroup()
                       editing -> setEditing(false)
                       pager.currentItem != 1 -> pager.setCurrentItem(1, true)
+                  }
+              }
+
+              // ================= Helpers de animação / reset =================
+
+              private fun resetTouchState(v: View?) {
+                  v ?: return
+                  v.animate().cancel()
+                  v.scaleX = 1f
+                  v.scaleY = 1f
+                  v.alpha = 1f
+              }
+
+              private fun resetDockIcons() {
+                  for (i in 0 until dock.childCount) {
+                      val frame = dock.getChildAt(i) as? ViewGroup ?: continue
+                      for (j in 0 until frame.childCount) {
+                          resetTouchState(frame.getChildAt(j))
+                      }
                   }
               }
 
@@ -932,9 +967,6 @@ jobs:
                               if (m.containsKey(pk)) continue
                               val label = ri.loadLabel(pm).toString()
                               val icon = Icons.build(label, pk, ri.loadIcon(pm))
-                              // Fix: nao chamar prepare() em todos os apps. O IosIcon
-                              // renderiza sob demanda no primeiro draw(); preparar todos
-                              // consumia ~147KB de bitmap por app e estourava a memoria.
                               m[pk] = AppItem(
                                   label,
                                   pk,
@@ -1046,9 +1078,6 @@ jobs:
                   val per = COLS * rows
                   homePages = home.chunked(per).ifEmpty { listOf(emptyList<Entry>()) }
                   pager.adapter?.notifyDataSetChanged()
-                  // Fix: manter apenas a pagina atual + vizinhas em memoria.
-                  // Antes ate 5 paginas extras ficavam vivas, multiplicando o
-                  // numero de views e bitmaps carregados.
                   pager.offscreenPageLimit = 1
                   if (!positioned && loaded) {
                       pager.setCurrentItem(1, false)
@@ -1128,27 +1157,33 @@ jobs:
                   if (groupOverlay != null) closeGroup()
               }
 
-              private fun launch(a: AppItem, v: View?) {
+              private fun launch(a: AppItem, anchor: View?, animated: View? = null) {
+                  // Fix: reseta qualquer animacao de escala/alpha pendente ANTES
+                  // de criar o overlay. Isso evita que a view de origem fique
+                  // "presa" em escala < 1 quando o app abre no meio da animacao
+                  // de toque (causa do icone de mensagens parecer menor).
+                  resetTouchState(animated ?: anchor)
+
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
                   ).toBundle()
-                  if (v == null || v.width == 0 || launchOverlay != null) {
+                  if (anchor == null || anchor.width == 0 || launchOverlay != null) {
                       startApp(a, opts)
                       return
                   }
                   val cl = IntArray(2)
                   content.getLocationOnScreen(cl)
                   val vl = IntArray(2)
-                  v.getLocationOnScreen(vl)
+                  anchor.getLocationOnScreen(vl)
                   val iv = ImageView(this)
                   iv.setImageDrawable(a.icon)
                   iv.scaleType = ImageView.ScaleType.FIT_XY
-                  val lp = FrameLayout.LayoutParams(v.width, v.height)
+                  val lp = FrameLayout.LayoutParams(anchor.width, anchor.height)
                   lp.leftMargin = vl[0] - cl[0] - content.paddingLeft
                   lp.topMargin = vl[1] - cl[1] - content.paddingTop
                   content.addView(iv, lp)
                   launchOverlay = iv
-                  val big = resources.displayMetrics.widthPixels * 1.15f / v.width
+                  val big = resources.displayMetrics.widthPixels * 1.15f / anchor.width
                   iv.animate().scaleX(big).scaleY(big).setDuration(240)
                       .setInterpolator(DecelerateInterpolator(1.3f))
                       .start()
@@ -1225,9 +1260,6 @@ jobs:
               }
 
               private fun pressable(v: View) {
-                  // Fix: cancela a animacao anterior antes de iniciar uma nova.
-                  // Sem isso, DOWN/UP rapidos deixavam a escala presa (ex.: 0.9)
-                  // quando a proxima animacao era enfileirada sobre a anterior.
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
@@ -1347,7 +1379,7 @@ jobs:
                   col.setOnClickListener { v ->
                       if (!editing) {
                           when (e) {
-                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
+                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder, col) }
                               is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e)
                           }
                       }
@@ -1415,10 +1447,6 @@ jobs:
                               true
                           }
                           DragEvent.ACTION_DRAG_ENDED -> {
-                              // Fix: quando o arraste e cancelado (sem drop),
-                              // o Android nao entrega ACTION_UP ao touch listener
-                              // do icone de origem; sem isso a view ficava com
-                              // alpha 0.3 e escala 0.9 (ou algum valor intermediario).
                               dragSource?.let { src ->
                                   src.alpha = 1f
                                   src.animate().cancel()
@@ -1509,7 +1537,7 @@ jobs:
                       val frame = FrameLayout(this)
                       val iv = roundIcon(a.icon, iconPx)
                       pressable(iv)
-                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnClickListener { launch(a, iv, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                           appMenu(a.pkg, Where.DOCK)
@@ -1547,7 +1575,20 @@ jobs:
                   pill.visibility = if (!editing && p >= 1 && p <= homePages.size) View.VISIBLE else View.INVISIBLE
               }
 
-              // ---------- Hoje (widgets) ----------
+              // ================= Helpers de "abrir configurações" =================
+
+              private fun tryStart(vararg intents: Intent) {
+                  for (i in intents) {
+                      try {
+                          startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                          return
+                      } catch (_: Exception) {
+                      }
+                  }
+                  Toast.makeText(this, "Não disponível neste aparelho", Toast.LENGTH_SHORT).show()
+              }
+
+              // ================= Hoje (widgets) =================
 
               private fun bar(pct: Int, color: Int): View {
                   val track = LinearLayout(this)
@@ -1568,6 +1609,181 @@ jobs:
                   }
               }
 
+              // ---------- CPU: leitura de /proc/stat e /sys/class/thermal ----------
+
+              private fun readCpuStat(): CpuStat {
+                  var overall: LongArray? = null
+                  val cores = mutableListOf<LongArray>()
+                  try {
+                      val f = File("/proc/stat")
+                      if (!f.canRead()) return CpuStat(null, cores)
+                      f.bufferedReader().use { br ->
+                          while (true) {
+                              val line = br.readLine() ?: break
+                              if (!line.startsWith("cpu")) break
+                              val parts = line.trim().split(Regex("\\s+"))
+                              // user nice system idle iowait irq softirq steal
+                              val v = LongArray(8)
+                              for (i in 0 until minOf(8, parts.size - 1)) {
+                                  v[i] = parts[i + 1].toLongOrNull() ?: 0L
+                              }
+                              if (line.length == 4 || !line[3].isDigit()) {
+                                  overall = v
+                              } else {
+                                  cores.add(v)
+                              }
+                          }
+                      }
+                  } catch (_: Exception) {
+                  }
+                  return CpuStat(overall, cores)
+              }
+
+              private fun computeCpuPct(prev: LongArray, curr: LongArray): Int {
+                  val dTotal = curr.sum() - prev.sum()
+                  val dIdle = (curr[3] + curr[4]) - (prev[3] + prev[4])
+                  if (dTotal <= 0) return 0
+                  return ((dTotal - dIdle) * 100 / dTotal).toInt().coerceIn(0, 100)
+              }
+
+              private fun readCpuTemps(): List<Pair<String, Float>> {
+                  val out = mutableListOf<Pair<String, Float>>()
+                  try {
+                      val dir = File("/sys/class/thermal")
+                      val zones = dir.listFiles() ?: return out
+                      for (z in zones) {
+                          if (!z.name.startsWith("thermal_zone")) continue
+                          try {
+                              val typeF = File(z, "type")
+                              val tempF = File(z, "temp")
+                              if (!typeF.exists() || !tempF.exists()) continue
+                              val type = typeF.readText().trim()
+                              val raw = tempF.readText().trim().toLongOrNull() ?: continue
+                              val celsius = if (raw > 1000) raw / 1000f else raw.toFloat()
+                              if (celsius in 1f..200f) {
+                                  out.add(type to celsius)
+                              }
+                          } catch (_: Exception) {
+                          }
+                      }
+                  } catch (_: Exception) {
+                  }
+                  return out
+              }
+
+              private fun updateCoreBars(box: LinearLayout, prev: List<LongArray>?, curr: List<LongArray>) {
+                  if (box.childCount != curr.size) {
+                      box.removeAllViews()
+                      for (i in curr.indices) {
+                          val row = LinearLayout(this).apply {
+                              orientation = LinearLayout.HORIZONTAL
+                              gravity = Gravity.CENTER_VERTICAL
+                              setPadding(0, dp(2), 0, dp(2))
+                          }
+                          row.addView(tv("C$i", 11f, 0xFFBBBBBB.toInt()), LinearLayout.LayoutParams(dp(26), WRAP))
+                          val track = LinearLayout(this).apply {
+                              weightSum = 100f
+                              background = rounded(0x33FFFFFF, dp(3))
+                          }
+                          row.addView(track, LinearLayout.LayoutParams(0, dp(6), 1f).apply { rightMargin = dp(8) })
+                          row.addView(tv("—", 10f, 0xFFBBBBBB.toInt()), LinearLayout.LayoutParams(dp(36), WRAP))
+                          box.addView(row)
+                      }
+                  }
+                  for (i in curr.indices) {
+                      val row = box.getChildAt(i) as? LinearLayout ?: continue
+                      if (row.childCount < 3) continue
+                      val track = row.getChildAt(1) as LinearLayout
+                      val label = row.getChildAt(2) as TextView
+                      val pct = if (prev != null && i < prev.size) computeCpuPct(prev[i], curr[i]) else -1
+                      track.removeAllViews()
+                      if (pct >= 0) {
+                          if (pct > 0) {
+                              val color = when {
+                                  pct >= 80 -> 0xFFFF3B30.toInt()
+                                  pct >= 50 -> 0xFFFF9F0A.toInt()
+                                  else -> 0xFF34C759.toInt()
+                              }
+                              val fill = View(this).apply { background = rounded(color, dp(3)) }
+                              track.addView(fill, LinearLayout.LayoutParams(0, MATCH, pct.toFloat()))
+                          }
+                          label.text = "$pct%"
+                      } else {
+                          label.text = "—"
+                      }
+                  }
+              }
+
+              private fun buildCpuCard(): View {
+                  val card = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(0x99000000.toInt(), dp(22))
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                  }
+                  card.addView(tv("CPU", 13f, 0xFFBBBBBB.toInt(), true))
+                  val overallView = tv("—", 40f, Color.WHITE).apply {
+                      typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                  }
+                  card.addView(overallView)
+                  val tempView = tv("Temp: —", 12f, 0xFFBBBBBB.toInt())
+                  card.addView(tempView)
+                  val coresBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  card.addView(coresBox, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(10) })
+
+                  card.setOnClickListener {
+                      tryStart(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
+                  }
+
+                  val handler = Handler(Looper.getMainLooper())
+                  var prev: CpuStat? = null
+                  var iterations = 0
+                  var running = false
+                  val task = object : Runnable {
+                      override fun run() {
+                          if (!running || !card.isAttachedToWindow) return
+                          if (pager.currentItem != 0) {
+                              handler.postDelayed(this, 1500)
+                              return
+                          }
+                          try {
+                              val now = readCpuStat()
+                              if (prev != null && prev!!.overall != null && now.overall != null) {
+                                  val pct = computeCpuPct(prev!!.overall!!, now.overall!!)
+                                  overallView.text = "$pct%"
+                                  updateCoreBars(coresBox, prev!!.cores, now.cores)
+                              } else {
+                                  updateCoreBars(coresBox, null, now.cores)
+                              }
+                              val temps = readCpuTemps()
+                              if (temps.isNotEmpty()) {
+                                  val max = temps.maxByOrNull { it.second }!!
+                                  tempView.text = "Temp: %.1f°C".format(max.second)
+                              } else {
+                                  tempView.text = "Temp: —"
+                              }
+                              prev = now
+                          } catch (_: Exception) {
+                          }
+                          iterations++
+                          handler.postDelayed(this, if (iterations == 1) 500L else 2000L)
+                      }
+                  }
+                  card.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                      override fun onViewAttachedToWindow(v: View) {
+                          running = true
+                          prev = null
+                          iterations = 0
+                          handler.post(task)
+                      }
+
+                      override fun onViewDetachedFromWindow(v: View) {
+                          running = false
+                          handler.removeCallbacks(task)
+                      }
+                  })
+                  return card
+              }
+
               private fun buildToday(): View {
                   val w = resources.displayMetrics.widthPixels
                   val gap = dp(12)
@@ -1581,25 +1797,42 @@ jobs:
                   }
                   sv.addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
 
-                  col.addView(TextClock(this).apply {
+                  // Relógio — toque abre o app de alarme
+                  val clockView = TextClock(this).apply {
                       format24Hour = "HH:mm"
                       format12Hour = "h:mm"
                       textSize = 56f
                       typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                       setTextColor(Color.WHITE)
                       setShadowLayer(6f, 0f, 1f, 0x66000000)
-                  }, LinearLayout.LayoutParams(MATCH, WRAP))
-                  col.addView(TextClock(this).apply {
+                      setOnClickListener {
+                          tryStart(
+                              Intent(AlarmClock.ACTION_SHOW_ALARMS),
+                              Intent(Settings.ACTION_DATE_SETTINGS)
+                          )
+                      }
+                  }
+                  col.addView(clockView, LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  // Data por extenso
+                  val dateView = TextClock(this).apply {
                       format24Hour = "EEEE, d 'de' MMMM"
                       format12Hour = "EEEE, d 'de' MMMM"
                       textSize = 16f
                       setTextColor(Color.WHITE)
                       setShadowLayer(6f, 0f, 1f, 0x66000000)
-                  }, LinearLayout.LayoutParams(MATCH, WRAP))
+                      setOnClickListener {
+                          tryStart(
+                              Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALENDAR),
+                              Intent(Settings.ACTION_DATE_SETTINGS)
+                          )
+                      }
+                  }
+                  col.addView(dateView, LinearLayout.LayoutParams(MATCH, WRAP))
 
                   val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
-                  // Calendário
+                  // Calendário — toque abre o app de calendário
                   val now = Date()
                   val cal = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
@@ -1618,9 +1851,15 @@ jobs:
                       java.text.SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(now),
                       13f, 0xFF6B6B6B.toInt()
                   ))
+                  cal.setOnClickListener {
+                      tryStart(
+                          Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALENDAR),
+                          Intent(Settings.ACTION_DATE_SETTINGS)
+                      )
+                  }
                   row.addView(cal, LinearLayout.LayoutParams(side, side))
 
-                  // Bateria
+                  // Bateria — toque abre o uso de bateria nas Configurações
                   val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                   val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
                   val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
@@ -1641,10 +1880,16 @@ jobs:
                       bar(pct, if (pct < 20 && !charging) 0xFFFF3B30.toInt() else 0xFF34C759.toInt()),
                       LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) }
                   )
+                  bat.setOnClickListener {
+                      tryStart(
+                          Intent(Intent.ACTION_POWER_USAGE_SUMMARY),
+                          Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
+                      )
+                  }
                   row.addView(bat, LinearLayout.LayoutParams(side, side).apply { leftMargin = gap })
                   col.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(16) })
 
-                  // Armazenamento
+                  // Armazenamento — toque abre Configurações > Armazenamento
                   var used = 0.0
                   var total = 1.0
                   try {
@@ -1665,7 +1910,18 @@ jobs:
                       bar((used / total * 100).toInt(), 0xFF0A84FF.toInt()),
                       LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) }
                   )
+                  sto.setOnClickListener {
+                      tryStart(
+                          Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
+                          Intent(Settings.ACTION_MEMORY_CARD_SETTINGS),
+                          Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)
+                      )
+                  }
                   col.addView(sto, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
+
+                  // CPU — uso total + por núcleo + temperatura
+                  col.addView(buildCpuCard(), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
+
                   return sv
               }
 
@@ -1684,8 +1940,6 @@ jobs:
                   }
               }
 
-              // Fix: aceita convert para reaproveitar a view do ListView (evita
-              // churn de views/GC — antes cada scroll criava novas fileiras).
               private fun appRow(a: AppItem, where: Where, convert: View? = null): View {
                   val row = (convert as? LinearLayout) ?: LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
@@ -1709,7 +1963,7 @@ jobs:
                   val tv = row.getChildAt(1) as TextView
                   iv.setImageDrawable(a.icon)
                   tv.text = a.label
-                  row.setOnClickListener { launch(a, row) }
+                  row.setOnClickListener { launch(a, row, row) }
                   row.setOnLongClickListener {
                       appMenu(a.pkg, where)
                       true
@@ -1744,7 +1998,7 @@ jobs:
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
                       pressable(iv)
-                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnClickListener { launch(a, iv, iv) }
                       iv.setOnLongClickListener {
                           appMenu(a.pkg, Where.LIBRARY)
                           true
@@ -1907,7 +2161,7 @@ jobs:
                               val iv = roundIcon(a.icon, iconPx)
                               cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
                               cell.addView(labelView(a.label), LinearLayout.LayoutParams(MATCH, WRAP))
-                              cell.setOnClickListener { launch(a, iv) }
+                              cell.setOnClickListener { launch(a, iv, cell) }
                               cell.setOnLongClickListener {
                                   it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                   appMenu(a.pkg, if (folder != null) Where.FOLDER else Where.LIBRARY, folder)
