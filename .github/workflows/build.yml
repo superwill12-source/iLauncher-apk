@@ -198,7 +198,8 @@ jobs:
 
               fun loadDock(): List<String>? {
                   val s = sp.getString("dock", null) ?: return null
-                  return s.split(",").filter { it.isNotEmpty() }
+                  val l = s.split(",").filter { it.isNotEmpty() }
+                  return if (l.isEmpty()) null else l
               }
 
               fun saveDock(list: List<String>) {
@@ -700,6 +701,7 @@ jobs:
               private var positioned = false
               private var loaded = false
               private var signature = ""
+              private var maxPagerH = 0
               private var dragEntry: Entry? = null
               private var dragSource: View? = null
               private var lastFlip = 0L
@@ -727,10 +729,8 @@ jobs:
 
                   content = FrameLayout(this)
                   ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
-                      val i = insets.getInsets(
-                          WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
-                      )
-                      v.setPadding(0, i.top, 0, i.bottom)
+                      val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      v.setPadding(0, sys.top, 0, sys.bottom)
                       insets
                   }
 
@@ -894,6 +894,7 @@ jobs:
                           categoryOf(ri.activityInfo.applicationInfo, pk)
                       )
                   }
+                  if (m.isEmpty() && loaded) return
                   val sig = m.keys.sorted().joinToString("|")
                   if (loaded && sig == signature) return
                   signature = sig
@@ -977,7 +978,8 @@ jobs:
               }
 
               private fun applyGrid() {
-                  val h = pager.height
+                  if (pager.height > maxPagerH) maxPagerH = pager.height
+                  val h = maxPagerH
                   val newRows = if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 6) else rows
                   if (newRows != rows || homePages.isEmpty()) {
                       rows = newRows
@@ -1687,6 +1689,13 @@ jobs:
                       setBackgroundColor(0x55000000)
                       setPadding(dp(16), dp(12), dp(16), 0)
                   }
+                  ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+                      val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+                      val below = (pager.parent as View).height - pager.height
+                      v.setPadding(dp(16), dp(12), dp(16), Math.max(0, ime.bottom - sys.bottom - below))
+                      insets
+                  }
                   val search = searchField("Biblioteca de Apps")
                   root.addView(search, LinearLayout.LayoutParams(MATCH, WRAP))
 
@@ -1829,6 +1838,12 @@ jobs:
 
                   ov.addView(panel, FrameLayout.LayoutParams(panelW, WRAP, Gravity.CENTER))
                   content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
+                  ViewCompat.setOnApplyWindowInsetsListener(ov) { v, insets ->
+                      val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+                      v.setPadding(0, 0, 0, Math.max(0, ime.bottom - sys.bottom))
+                      insets
+                  }
                   groupOverlay = ov
                   groupFolder = folder
 
@@ -1926,6 +1941,12 @@ jobs:
                   ov.addView(list, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(8) })
 
                   content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
+                  ViewCompat.setOnApplyWindowInsetsListener(ov) { v, insets ->
+                      val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+                      v.setPadding(dp(16), dp(12), dp(16), Math.max(0, ime.bottom - sys.bottom))
+                      insets
+                  }
                   searchOverlay = ov
                   ov.alpha = 0f
                   ov.animate().alpha(1f).setDuration(160).start()
