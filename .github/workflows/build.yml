@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 10
-                  versionName = "2.8"
+                  versionCode = 11
+                  versionName = "2.9"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -382,36 +382,33 @@ jobs:
                   return out
               }
 
-              // ======================= CORREÇÃO DO TAMANHO DO ÍCONE =======================
+              // ========== WRAP com ZOOM 1.25x + clipping ==========
+              // O ícone do Android tem 15% de "safe zone" (margem). Aplicar zoom
+              // faz o ícone preencher uniformemente o squircle. O BitmapShader
+              // do squircle faz o clipping, cortando o excesso nas bordas.
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
 
-                  c.save()
-                  // O Android deixa uma margem de ~15% ao redor dos ícones (Safe Zone).
-                  // Aplicamos um zoom de 1.15x para fazer a arte preencher todo o squircle,
-                  // ficando exatamente do mesmo tamanho dos ícones nativos do iOS.
-                  val zoom = 1.15f
-                  c.scale(zoom, zoom, 128f, 128f)
-
+                  val zoom = 1.25f
+                  val big = (256 * zoom).toInt()  // 320
+                  val off = (256 - big) / 2       // -32
+                  
                   if (b is AdaptiveIconDrawable) {
-                      // Desenha o fundo e a frente sem a máscara padrão do Android
                       b.background?.let {
-                          it.setBounds(0, 0, 256, 256)
+                          it.setBounds(off, off, off + big, off + big)
                           it.draw(c)
                       }
                       b.foreground?.let {
-                          it.setBounds(0, 0, 256, 256)
+                          it.setBounds(off, off, off + big, off + big)
                           it.draw(c)
                       }
                   } else {
-                      // Ícones antigos (não adaptativos) também ganham o zoom
-                      b.setBounds(0, 0, 256, 256)
+                      b.setBounds(off, off, off + big, off + big)
                       b.draw(c)
                   }
-                  c.restore()
               }
-              // ==========================================================================
+              // ===================================================
 
               private fun phone(c: Canvas) {
                   gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
@@ -770,26 +767,12 @@ jobs:
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
-                  pager.setPageTransformer { page, position ->
-                      val a = Math.min(Math.abs(position), 1f)
-                      val sc = 1f - 0.06f * a
-                      page.scaleX = sc
-                      page.scaleY = sc
-                  }
+                  // NOTA: setPageTransformer removido para evitar scale < 1 nas páginas adjacentes.
+                  // O efeito de profundidade do iOS não existe mesmo.
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
                           updatePill()
-                      }
-
-                      override fun onPageScrollStateChanged(state: Int) {
-                          val rv = pager.getChildAt(0) as? RecyclerView ?: return
-                          val layer = if (state != ViewPager2.SCROLL_STATE_IDLE && !editing) {
-                              View.LAYER_TYPE_HARDWARE
-                          } else {
-                              View.LAYER_TYPE_NONE
-                          }
-                          for (i in 0 until rv.childCount) rv.getChildAt(i).setLayerType(layer, null)
                       }
                   })
                   pager.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
@@ -873,13 +856,10 @@ jobs:
                   super.onResume()
                   dismissLaunch(true)
                   refresh()
-                  resetAllIconScales()
-                  resetDockIcons()
+                  // Garantia final: sem escala animada, mas reset para segurança
                   if (loaded) {
                       pager.postDelayed({
                           pager.adapter?.notifyDataSetChanged()
-                          resetAllIconScales()
-                          resetDockIcons()
                       }, 300)
                   }
               }
@@ -904,42 +884,12 @@ jobs:
                   }
               }
 
-              // ================= Helpers de animação / reset =================
+              // ================= Helpers =================
 
               private fun resetTouchState(v: View?) {
                   v ?: return
                   v.animate().cancel()
-                  v.scaleX = 1f
-                  v.scaleY = 1f
                   v.alpha = 1f
-              }
-
-              private fun resetAllIconScales() {
-                  val rv = pager.getChildAt(0) as? RecyclerView ?: return
-                  for (i in 0 until rv.childCount) {
-                      val page = rv.getChildAt(i)
-                      resetViewHierarchy(page)
-                  }
-                  resetDockIcons()
-              }
-
-              private fun resetViewHierarchy(v: View) {
-                  if (v is ViewGroup) {
-                      for (i in 0 until v.childCount) {
-                          resetViewHierarchy(v.getChildAt(i))
-                      }
-                  }
-                  v.scaleX = 1f
-                  v.scaleY = 1f
-              }
-
-              private fun resetDockIcons() {
-                  for (i in 0 until dock.childCount) {
-                      val frame = dock.getChildAt(i) as? ViewGroup ?: continue
-                      for (j in 0 until frame.childCount) {
-                          resetTouchState(frame.getChildAt(j))
-                      }
-                  }
               }
 
               // ================= Dados =================
@@ -1174,47 +1124,22 @@ jobs:
                   if (groupOverlay != null) closeGroup()
               }
 
+              // ===== launch SEM overlay de scale (evita o ícone "congelar" pequeno) =====
               private fun launch(a: AppItem, anchor: View?, animated: View? = null) {
                   resetTouchState(animated ?: anchor)
 
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
                   ).toBundle()
-                  if (anchor == null || anchor.width == 0 || launchOverlay != null) {
-                      startApp(a, opts)
-                      return
-                  }
-                  val cl = IntArray(2)
-                  content.getLocationOnScreen(cl)
-                  val vl = IntArray(2)
-                  anchor.getLocationOnScreen(vl)
-                  val iv = ImageView(this)
-                  iv.setImageDrawable(a.icon)
-                  iv.scaleType = ImageView.ScaleType.FIT_XY
-                  val lp = FrameLayout.LayoutParams(anchor.width, anchor.height)
-                  lp.leftMargin = vl[0] - cl[0] - content.paddingLeft
-                  lp.topMargin = vl[1] - cl[1] - content.paddingTop
-                  content.addView(iv, lp)
-                  launchOverlay = iv
-                  val big = resources.displayMetrics.widthPixels * 1.15f / anchor.width
-                  iv.animate().scaleX(big).scaleY(big).setDuration(240)
-                      .setInterpolator(DecelerateInterpolator(1.3f))
-                      .start()
-                  iv.postDelayed({ startApp(a, opts) }, 90)
-                  iv.postDelayed({ if (launchOverlay === iv) dismissLaunch(true) }, 3000)
+
+                  // Sem animação de scale no overlay, para nunca prender escala.
+                  startApp(a, opts)
               }
 
               private fun dismissLaunch(animate: Boolean) {
                   val iv = launchOverlay ?: return
                   launchOverlay = null
-                  if (animate) {
-                      iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(280)
-                          .setInterpolator(DecelerateInterpolator())
-                          .withEndAction { content.removeView(iv) }
-                          .start()
-                  } else {
-                      content.removeView(iv)
-                  }
+                  content.removeView(iv)
               }
 
               private fun setEditing(on: Boolean) {
@@ -1272,18 +1197,17 @@ jobs:
                   }
               }
 
+              // ===== pressable SEM escala (só alpha): impossível encolher =====
               private fun pressable(v: View) {
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
-                              view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100)
-                                  .setInterpolator(DecelerateInterpolator()).start()
+                              view.animate().alpha(0.5f).setDuration(120).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                               view.animate().cancel()
-                              view.animate().scaleX(1f).scaleY(1f).setDuration(200)
-                                  .setInterpolator(OvershootInterpolator(1.5f)).start()
+                              view.animate().alpha(1f).setDuration(200).start()
                           }
                       }
                       false
@@ -1463,8 +1387,6 @@ jobs:
                               dragSource?.let { src ->
                                   src.alpha = 1f
                                   src.animate().cancel()
-                                  src.scaleX = 1f
-                                  src.scaleY = 1f
                               }
                               dragSource = null
                               dragEntry = null
@@ -1543,7 +1465,7 @@ jobs:
                   return root
               }
 
-              // ================= DOCK (IPHONE STYLE) =================
+              // ================= DOCK =================
               private fun buildDock() {
                   dock.removeAllViews()
                   if (dockPkgs.isEmpty()) {
@@ -1552,16 +1474,14 @@ jobs:
                   }
                   dock.visibility = View.VISIBLE
 
-                  val dockIconSize = iconPx // Tamanho EXATO igual ao da tela inicial
+                  val dockIconSize = iconPx
 
                   for (pk in dockPkgs) {
                       val a = apps[pk] ?: continue
                       
-                      // Container com espaçamento uniforme
                       val frame = FrameLayout(this)
                       frame.layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
 
-                      // ImageView configurada para preencher o quadrado perfeitamente
                       val iv = ImageView(this).apply {
                           setImageDrawable(a.icon)
                           scaleType = ImageView.ScaleType.FIT_XY
@@ -1570,22 +1490,19 @@ jobs:
                       pressable(iv)
                       
                       iv.setOnClickListener {
-                          resetTouchState(iv)
                           launch(a, iv, iv)
                       }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                          resetTouchState(iv)
                           appMenu(a.pkg, Where.DOCK)
                           true
                       }
 
-                      // Centraliza a imagem no frame, garantindo que não encolha
                       frame.addView(iv, FrameLayout.LayoutParams(dockIconSize, dockIconSize, Gravity.CENTER))
                       dock.addView(frame)
                   }
               }
-              // =====================================================================
+              // ==========================================
 
               private fun updateDots(selected: Int) {
                   val total = homePages.size + 2
@@ -1646,8 +1563,6 @@ jobs:
                       if (bold) typeface = Typeface.DEFAULT_BOLD
                   }
               }
-
-              // ---------- CPU e Temperatura via APIs Oficiais ----------
 
               private fun readBatteryTemp(): Float? {
                   try {
