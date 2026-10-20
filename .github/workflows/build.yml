@@ -1,0 +1,1551 @@
+# iLauncher - cria o projeto Android inteiro e compila o APK sozinho.
+# Basta colocar ESTE arquivo em .github/workflows/build.yml no seu repositorio.
+name: Build iLauncher APK
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+          cache-disabled: true
+
+      - name: Gerar projeto Android
+        run: |
+          mkdir -p proj/app/src/main/java/com/ioslauncher proj/app/src/main/res/values
+          cat > proj/settings.gradle.kts <<'EOF_FILE'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "ILauncher"
+          include(":app")
+          EOF_FILE
+          cat > proj/build.gradle.kts <<'EOF_FILE'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF_FILE
+          cat > proj/gradle.properties <<'EOF_FILE'
+          org.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          EOF_FILE
+          cat > proj/app/build.gradle.kts <<'EOF_FILE'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+
+          android {
+              namespace = "com.ioslauncher"
+              compileSdk = 34
+
+              defaultConfig {
+                  applicationId = "com.ioslauncher"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 2
+                  versionName = "2.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.13.1")
+              implementation("androidx.recyclerview:recyclerview:1.3.2")
+              implementation("androidx.viewpager2:viewpager2:1.1.0")
+          }
+          EOF_FILE
+          cat > proj/app/src/main/AndroidManifest.xml <<'EOF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+              <queries>
+                  <intent>
+                      <action android:name="android.intent.action.MAIN" />
+                      <category android:name="android.intent.category.LAUNCHER" />
+                  </intent>
+                  <intent><action android:name="android.intent.action.DIAL" /></intent>
+                  <intent>
+                      <action android:name="android.intent.action.SENDTO" />
+                      <data android:scheme="smsto" />
+                  </intent>
+                  <intent>
+                      <action android:name="android.intent.action.VIEW" />
+                      <data android:scheme="https" />
+                  </intent>
+                  <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+              </queries>
+
+              <application
+                  android:allowBackup="true"
+                  android:label="@string/app_name"
+                  android:theme="@style/LauncherTheme">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:launchMode="singleTask"
+                      android:screenOrientation="portrait"
+                      android:stateNotNeeded="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.HOME" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF_FILE
+          cat > proj/app/src/main/res/values/strings.xml <<'EOF_FILE'
+          <resources>
+              <string name="app_name">iLauncher</string>
+          </resources>
+          EOF_FILE
+          cat > proj/app/src/main/res/values/themes.xml <<'EOF_FILE'
+          <resources>
+              <style name="LauncherTheme" parent="@android:style/Theme.Material.Wallpaper.NoTitleBar">
+                  <item name="android:windowShowWallpaper">true</item>
+                  <item name="android:statusBarColor">@android:color/transparent</item>
+                  <item name="android:navigationBarColor">@android:color/transparent</item>
+                  <item name="android:windowLightStatusBar">false</item>
+              </style>
+          </resources>
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/Store.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.content.Context
+          import org.json.JSONArray
+          import org.json.JSONObject
+
+          sealed class Entry {
+              data class App(val pkg: String) : Entry()
+              class Folder(var name: String, val pkgs: MutableList<String>) : Entry()
+          }
+
+          class Store(ctx: Context) {
+              private val sp = ctx.getSharedPreferences("layout", Context.MODE_PRIVATE)
+
+              fun loadHome(): MutableList<Entry> {
+                  val out = mutableListOf<Entry>()
+                  val s = sp.getString("home", null) ?: return out
+                  try {
+                      val arr = JSONArray(s)
+                      for (i in 0 until arr.length()) {
+                          val o = arr.getJSONObject(i)
+                          if (o.getString("t") == "a") {
+                              out.add(Entry.App(o.getString("p")))
+                          } else {
+                              val l = mutableListOf<String>()
+                              val a = o.getJSONArray("a")
+                              for (j in 0 until a.length()) l.add(a.getString(j))
+                              out.add(Entry.Folder(o.getString("n"), l))
+                          }
+                      }
+                  } catch (_: Exception) {
+                  }
+                  return out
+              }
+
+              fun saveHome(list: List<Entry>) {
+                  val arr = JSONArray()
+                  for (e in list) {
+                      val o = JSONObject()
+                      when (e) {
+                          is Entry.App -> {
+                              o.put("t", "a")
+                              o.put("p", e.pkg)
+                          }
+                          is Entry.Folder -> {
+                              o.put("t", "f")
+                              o.put("n", e.name)
+                              val a = JSONArray()
+                              for (p in e.pkgs) a.put(p)
+                              o.put("a", a)
+                          }
+                      }
+                      arr.put(o)
+                  }
+                  sp.edit().putString("home", arr.toString()).apply()
+              }
+
+              fun loadDock(): List<String>? {
+                  val s = sp.getString("dock", null) ?: return null
+                  return s.split(",").filter { it.isNotEmpty() }
+              }
+
+              fun saveDock(list: List<String>) {
+                  sp.edit().putString("dock", list.joinToString(",")).apply()
+              }
+
+              fun loadHidden(): Set<String> {
+                  return HashSet(sp.getStringSet("hidden", emptySet()) ?: emptySet())
+              }
+
+              fun saveHidden(set: Set<String>) {
+                  sp.edit().putStringSet("hidden", HashSet(set)).apply()
+              }
+          }
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/MainActivity.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.animation.ObjectAnimator
+          import android.animation.ValueAnimator
+          import android.app.Activity
+          import android.app.ActivityOptions
+          import android.app.AlertDialog
+          import android.content.ClipData
+          import android.content.Intent
+          import android.content.IntentFilter
+          import android.content.pm.ApplicationInfo
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.graphics.Outline
+          import android.graphics.Typeface
+          import android.graphics.drawable.Drawable
+          import android.graphics.drawable.GradientDrawable
+          import android.net.Uri
+          import android.os.BatteryManager
+          import android.os.Bundle
+          import android.os.Environment
+          import android.os.StatFs
+          import android.provider.MediaStore
+          import android.provider.Settings
+          import android.text.InputType
+          import android.text.TextUtils
+          import android.view.DragEvent
+          import android.view.GestureDetector
+          import android.view.Gravity
+          import android.view.HapticFeedbackConstants
+          import android.view.MotionEvent
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.ViewOutlineProvider
+          import android.view.inputmethod.EditorInfo
+          import android.view.inputmethod.InputMethodManager
+          import android.widget.BaseAdapter
+          import android.widget.EditText
+          import android.widget.FrameLayout
+          import android.widget.ImageView
+          import android.widget.LinearLayout
+          import android.widget.ListView
+          import android.widget.ScrollView
+          import android.widget.TextClock
+          import android.widget.TextView
+          import android.widget.Toast
+          import androidx.core.view.ViewCompat
+          import androidx.core.view.WindowCompat
+          import androidx.core.view.WindowInsetsCompat
+          import androidx.core.widget.doAfterTextChanged
+          import androidx.recyclerview.widget.RecyclerView
+          import androidx.viewpager2.widget.ViewPager2
+          import java.util.Date
+          import java.util.Locale
+
+          data class AppItem(
+              val label: String,
+              val pkg: String,
+              val intent: Intent,
+              val icon: Drawable,
+              val category: String
+          )
+
+          private enum class Where { HOME, DOCK, FOLDER, LIBRARY, SEARCH }
+
+          private class OptionList {
+              val titles = mutableListOf<String>()
+              val actions = mutableListOf<() -> Unit>()
+              fun add(title: String, action: () -> Unit) {
+                  titles.add(title)
+                  actions.add(action)
+              }
+          }
+
+          class MainActivity : Activity() {
+
+              private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
+              private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
+              private val COLS = 4
+              private val CATEGORIES = listOf(
+                  "Social", "Entretenimento", "Foto e Vídeo", "Produtividade",
+                  "Finanças", "Viagens", "Notícias", "Jogos", "Utilidades"
+              )
+
+              private lateinit var pager: ViewPager2
+              private lateinit var dots: LinearLayout
+              private lateinit var pill: TextView
+              private lateinit var dock: LinearLayout
+              private lateinit var content: FrameLayout
+              private lateinit var doneBtn: TextView
+              private lateinit var store: Store
+              private lateinit var detector: GestureDetector
+
+              private var apps = LinkedHashMap<String, AppItem>()
+              private var sorted = listOf<AppItem>()
+              private var home = mutableListOf<Entry>()
+              private var dockPkgs = mutableListOf<String>()
+              private var hidden = mutableSetOf<String>()
+              private var homePages = listOf<List<Entry>>()
+              private var rows = 5
+              private var editing = false
+              private var positioned = false
+              private var loaded = false
+              private var signature = ""
+              private var dragEntry: Entry? = null
+              private var dragSource: View? = null
+              private var lastFlip = 0L
+              private var groupOverlay: View? = null
+              private var groupFolder: Entry.Folder? = null
+              private var searchOverlay: View? = null
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+              private val iconPx get() = (resources.displayMetrics.widthPixels / COLS * 0.72f).toInt()
+              private fun cellH() = iconPx + dp(8) + dp(22) + dp(14)
+
+              private fun rounded(color: Int, r: Int): GradientDrawable =
+                  GradientDrawable().apply {
+                      cornerRadius = r.toFloat()
+                      setColor(color)
+                  }
+
+              // ================= Ciclo de vida =================
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  store = Store(this)
+                  WindowCompat.setDecorFitsSystemWindows(window, false)
+
+                  content = FrameLayout(this)
+                  ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
+                      val i = insets.getInsets(
+                          WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.ime()
+                      )
+                      v.setPadding(0, i.top, 0, i.bottom)
+                      insets
+                  }
+
+                  val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+                  pager = ViewPager2(this)
+                  pager.adapter = PageAdapter()
+                  pager.offscreenPageLimit = 1
+                  pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+                      override fun onPageSelected(position: Int) {
+                          updateDots(position)
+                          updatePill()
+                      }
+                  })
+                  pager.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob ->
+                      if (b - t != ob - ot) applyGrid()
+                  }
+                  column.addView(pager, LinearLayout.LayoutParams(MATCH, 0, 1f))
+
+                  dots = LinearLayout(this).apply { gravity = Gravity.CENTER }
+                  column.addView(dots, LinearLayout.LayoutParams(MATCH, dp(20)))
+
+                  pill = TextView(this).apply {
+                      text = "🔍  Pesquisar"
+                      textSize = 13f
+                      setTextColor(Color.WHITE)
+                      gravity = Gravity.CENTER
+                      background = rounded(0x40FFFFFF, dp(16))
+                      setPadding(dp(18), dp(6), dp(18), dp(6))
+                      setOnClickListener { openSearch() }
+                  }
+                  column.addView(pill, LinearLayout.LayoutParams(WRAP, dp(32)).apply {
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      bottomMargin = dp(10)
+                  })
+
+                  dock = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER
+                      setPadding(dp(8), dp(12), dp(8), dp(12))
+                      background = rounded(0x55FFFFFF, dp(34))
+                  }
+                  column.addView(dock, LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                      setMargins(dp(10), 0, dp(10), dp(8))
+                  })
+
+                  content.addView(column, FrameLayout.LayoutParams(MATCH, MATCH))
+
+                  doneBtn = TextView(this).apply {
+                      text = "OK"
+                      textSize = 15f
+                      typeface = Typeface.DEFAULT_BOLD
+                      setTextColor(Color.WHITE)
+                      background = rounded(0x66000000, dp(16))
+                      setPadding(dp(18), dp(6), dp(18), dp(6))
+                      visibility = View.GONE
+                      setOnClickListener { setEditing(false) }
+                  }
+                  content.addView(doneBtn, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END).apply {
+                      setMargins(0, dp(6), dp(16), 0)
+                  })
+
+                  setContentView(content)
+
+                  detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                      override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                          if (e1 == null) return false
+                          val dy = e2.y - e1.y
+                          val dx = e2.x - e1.x
+                          val p = pager.currentItem
+                          if (!editing && searchOverlay == null && groupOverlay == null &&
+                              p >= 1 && p <= homePages.size &&
+                              dy > dp(100) && Math.abs(dy) > Math.abs(dx) * 1.5f && vy > 800f
+                          ) {
+                              openSearch()
+                          }
+                          return false
+                      }
+                  })
+              }
+
+              override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+                  detector.onTouchEvent(ev)
+                  return super.dispatchTouchEvent(ev)
+              }
+
+              override fun onResume() {
+                  super.onResume()
+                  refresh()
+                  if (loaded) pager.adapter?.notifyItemChanged(0)
+              }
+
+              override fun onNewIntent(intent: Intent?) {
+                  super.onNewIntent(intent)
+                  when {
+                      searchOverlay != null -> closeSearch()
+                      groupOverlay != null -> closeGroup()
+                      editing -> setEditing(false)
+                      else -> pager.setCurrentItem(1, true)
+                  }
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun onBackPressed() {
+                  when {
+                      searchOverlay != null -> closeSearch()
+                      groupOverlay != null -> closeGroup()
+                      editing -> setEditing(false)
+                      pager.currentItem != 1 -> pager.setCurrentItem(1, true)
+                  }
+              }
+
+              // ================= Dados =================
+
+              private fun categoryOf(ai: ApplicationInfo?, pkg: String): String {
+                  when (ai?.category) {
+                      ApplicationInfo.CATEGORY_GAME -> return "Jogos"
+                      ApplicationInfo.CATEGORY_AUDIO, ApplicationInfo.CATEGORY_VIDEO -> return "Entretenimento"
+                      ApplicationInfo.CATEGORY_IMAGE -> return "Foto e Vídeo"
+                      ApplicationInfo.CATEGORY_SOCIAL -> return "Social"
+                      ApplicationInfo.CATEGORY_NEWS -> return "Notícias"
+                      ApplicationInfo.CATEGORY_MAPS -> return "Viagens"
+                      ApplicationInfo.CATEGORY_PRODUCTIVITY -> return "Produtividade"
+                  }
+                  val p = pkg.lowercase()
+                  return when {
+                      listOf("camera", "gallery", "photo", "galer").any { p.contains(it) } -> "Foto e Vídeo"
+                      listOf("whatsapp", "telegram", "facebook", "instagram", "twitter", "messag", "mms",
+                          "dialer", "contacts", "tiktok", "snapchat", "discord").any { p.contains(it) } -> "Social"
+                      listOf("youtube", "netflix", "spotify", "music", "video", "player", "disney").any { p.contains(it) } -> "Entretenimento"
+                      listOf("maps", "uber", "booking", "airbnb", "travel").any { p.contains(it) } -> "Viagens"
+                      listOf("bank", "nubank", "wallet", "finance", "itau", "bradesco", "santander").any { p.contains(it) } -> "Finanças"
+                      listOf("office", "docs", "drive", "mail", "calendar", "notes", "keep").any { p.contains(it) } -> "Produtividade"
+                      else -> "Utilidades"
+                  }
+              }
+
+              private fun refresh() {
+                  val pm = packageManager
+                  val main = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                  val list = pm.queryIntentActivities(main, 0).filter { it.activityInfo.packageName != packageName }
+                  val m = LinkedHashMap<String, AppItem>()
+                  for (ri in list) {
+                      val pk = ri.activityInfo.packageName
+                      if (m.containsKey(pk)) continue
+                      m[pk] = AppItem(
+                          ri.loadLabel(pm).toString(),
+                          pk,
+                          Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                              .setClassName(pk, ri.activityInfo.name)
+                              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+                          ri.loadIcon(pm),
+                          categoryOf(ri.activityInfo.applicationInfo, pk)
+                      )
+                  }
+                  val sig = m.keys.sorted().joinToString("|")
+                  if (loaded && sig == signature) return
+                  signature = sig
+                  apps = m
+                  sorted = m.values.sortedBy { it.label.lowercase() }
+                  syncLayout()
+                  loaded = true
+                  applyGrid()
+                  rebuild()
+              }
+
+              private fun autoDock(): List<String> {
+                  val pm = packageManager
+                  val probes = listOf(
+                      Intent(Intent.ACTION_DIAL),
+                      Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:")),
+                      Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")),
+                      Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                  )
+                  return probes
+                      .mapNotNull { pm.resolveActivity(it, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }
+                      .distinct()
+              }
+
+              private fun syncLayout() {
+                  home = store.loadHome()
+                  hidden = store.loadHidden().filter { apps.containsKey(it) }.toMutableSet()
+                  val saved = store.loadDock()
+                  dockPkgs = (saved ?: autoDock()).filter { apps.containsKey(it) }.distinct().take(4).toMutableList()
+
+                  val seen = HashSet<String>()
+                  val cleaned = mutableListOf<Entry>()
+                  for (e in home) {
+                      when (e) {
+                          is Entry.App -> {
+                              if (apps.containsKey(e.pkg) && e.pkg !in dockPkgs && e.pkg !in hidden && seen.add(e.pkg)) {
+                                  cleaned.add(e)
+                              }
+                          }
+                          is Entry.Folder -> {
+                              e.pkgs.retainAll { apps.containsKey(it) && it !in dockPkgs && it !in hidden && seen.add(it) }
+                              if (e.pkgs.isNotEmpty()) cleaned.add(e)
+                          }
+                      }
+                  }
+                  for (a in sorted) {
+                      if (a.pkg !in seen && a.pkg !in dockPkgs && a.pkg !in hidden) {
+                          cleaned.add(Entry.App(a.pkg))
+                          seen.add(a.pkg)
+                      }
+                  }
+                  home = cleaned
+                  normalize()
+                  saveAll()
+              }
+
+              private fun normalize() {
+                  val out = mutableListOf<Entry>()
+                  for (e in home) {
+                      when (e) {
+                          is Entry.App -> out.add(e)
+                          is Entry.Folder -> {
+                              if (e.pkgs.size == 1) out.add(Entry.App(e.pkgs[0]))
+                              else if (e.pkgs.size > 1) out.add(e)
+                          }
+                      }
+                  }
+                  home = out
+              }
+
+              private fun saveAll() {
+                  store.saveHome(home)
+                  store.saveDock(dockPkgs)
+                  store.saveHidden(hidden)
+              }
+
+              private fun commit() {
+                  normalize()
+                  saveAll()
+                  rebuild()
+              }
+
+              private fun applyGrid() {
+                  val h = pager.height
+                  val newRows = if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 6) else rows
+                  if (newRows != rows || homePages.isEmpty()) {
+                      rows = newRows
+                      if (loaded) rebuild()
+                  }
+              }
+
+              private fun rebuild() {
+                  val per = COLS * rows
+                  homePages = home.chunked(per).ifEmpty { listOf(emptyList<Entry>()) }
+                  pager.adapter?.notifyDataSetChanged()
+                  if (!positioned && loaded) {
+                      pager.setCurrentItem(1, false)
+                      positioned = true
+                  }
+                  buildDock()
+                  updateDots(pager.currentItem)
+                  updatePill()
+              }
+
+              // ================= Operações =================
+
+              private fun removeFromHome(pkg: String) {
+                  home = home.filterNot { it is Entry.App && it.pkg == pkg }.toMutableList()
+                  for (e in home) if (e is Entry.Folder) e.pkgs.remove(pkg)
+                  normalize()
+              }
+
+              private fun hideApp(pkg: String) {
+                  removeFromHome(pkg)
+                  dockPkgs.remove(pkg)
+                  hidden.add(pkg)
+                  commit()
+              }
+
+              private fun addToHome(pkg: String) {
+                  hidden.remove(pkg)
+                  removeFromHome(pkg)
+                  home.add(Entry.App(pkg))
+                  commit()
+              }
+
+              private fun dockApp(pkg: String) {
+                  removeFromHome(pkg)
+                  hidden.remove(pkg)
+                  if (dockPkgs.size < 4 && pkg !in dockPkgs) dockPkgs.add(pkg)
+                  commit()
+              }
+
+              private fun undock(pkg: String) {
+                  dockPkgs.remove(pkg)
+                  home.add(Entry.App(pkg))
+                  commit()
+              }
+
+              private fun takeOutOfFolder(pkg: String, f: Entry.Folder) {
+                  closeGroup()
+                  f.pkgs.remove(pkg)
+                  home.add(Entry.App(pkg))
+                  commit()
+              }
+
+              private fun uninstall(pkg: String) {
+                  try {
+                      startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")))
+                  } catch (_: Exception) {
+                      Toast.makeText(this, "Não foi possível apagar", Toast.LENGTH_SHORT).show()
+                  }
+              }
+
+              private fun appInfo(pkg: String) {
+                  try {
+                      startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
+                  } catch (_: Exception) {
+                  }
+              }
+
+              private fun launch(a: AppItem, v: View?) {
+                  val opts = try {
+                      if (v != null && v.width > 0) {
+                          ActivityOptions.makeScaleUpAnimation(v, 0, 0, v.width, v.height).toBundle()
+                      } else null
+                  } catch (_: Exception) {
+                      null
+                  }
+                  try {
+                      startActivity(a.intent, opts)
+                  } catch (_: Exception) {
+                      Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                      return
+                  }
+                  if (searchOverlay != null) closeSearch()
+                  if (groupOverlay != null) closeGroup()
+              }
+
+              private fun setEditing(on: Boolean) {
+                  editing = on
+                  doneBtn.visibility = if (on) View.VISIBLE else View.GONE
+                  if (!on) {
+                      normalize()
+                      saveAll()
+                  }
+                  rebuild()
+              }
+
+              private fun showMenu(title: String, build: OptionList.() -> Unit) {
+                  val o = OptionList()
+                  o.build()
+                  val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                      .setTitle(title)
+                      .setItems(o.titles.toTypedArray()) { _, i -> o.actions[i]() }
+                      .create()
+                  dlg.show()
+                  dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+              }
+
+              private fun appMenu(pkg: String, where: Where, folder: Entry.Folder? = null) {
+                  val a = apps[pkg] ?: return
+                  val onHome = home.any { (it is Entry.App && it.pkg == pkg) || (it is Entry.Folder && pkg in it.pkgs) }
+                  showMenu(a.label) {
+                      if (onHome || where == Where.DOCK) add("Editar Tela de Início") {
+                          closeGroup()
+                          setEditing(true)
+                      }
+                      if (where == Where.DOCK) add("Tirar do Dock") { undock(pkg) }
+                      else if (pkg !in dockPkgs && dockPkgs.size < 4) add("Colocar no Dock") { dockApp(pkg) }
+                      if (where == Where.FOLDER && folder != null) add("Tirar da pasta") { takeOutOfFolder(pkg, folder) }
+                      if (onHome) add("Remover da Tela de Início") { hideApp(pkg) }
+                      else if (pkg !in dockPkgs) add("Adicionar à Tela de Início") { addToHome(pkg) }
+                      add("Informações do app") { appInfo(pkg) }
+                      add("Apagar app") { uninstall(pkg) }
+                  }
+              }
+
+              private fun folderMenu(f: Entry.Folder) {
+                  showMenu(f.name) {
+                      add("Editar Tela de Início") { setEditing(true) }
+                      add("Renomear") { openGroup(f.name, f.pkgs.toList(), f) }
+                  }
+              }
+
+              // ================= Ícones =================
+
+              private fun roundIcon(d: Drawable, size: Int): ImageView {
+                  return ImageView(this).apply {
+                      setImageDrawable(d.constantState?.newDrawable() ?: d)
+                      setBackgroundColor(Color.WHITE)
+                      outlineProvider = object : ViewOutlineProvider() {
+                          override fun getOutline(view: View, outline: Outline) {
+                              outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.225f)
+                          }
+                      }
+                      clipToOutline = true
+                  }
+              }
+
+              private fun folderIconView(f: Entry.Folder): View {
+                  val box = FrameLayout(this)
+                  box.background = rounded(0x66FFFFFF, (iconPx * 0.225f).toInt())
+                  val pad = (iconPx * 0.1f).toInt()
+                  val mini = (iconPx * 0.22f).toInt()
+                  val grid = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(pad, pad, pad, pad)
+                  }
+                  val items = f.pkgs.take(9)
+                  for (r in 0 until 3) {
+                      val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      for (c in 0 until 3) {
+                          val a = items.getOrNull(r * 3 + c)?.let { apps[it] }
+                          val v: View = if (a != null) roundIcon(a.icon, mini) else View(this)
+                          row.addView(v, LinearLayout.LayoutParams(mini, mini).apply { setMargins(1, 1, 1, 1) })
+                      }
+                      grid.addView(row)
+                  }
+                  box.addView(grid, FrameLayout.LayoutParams(MATCH, MATCH))
+                  return box
+              }
+
+              private fun wiggle(v: View) {
+                  val a = ObjectAnimator.ofFloat(v, View.ROTATION, -2.2f, 2.2f).apply {
+                      duration = 100L + (Math.random() * 40).toLong()
+                      repeatCount = ValueAnimator.INFINITE
+                      repeatMode = ValueAnimator.REVERSE
+                      startDelay = (Math.random() * 100).toLong()
+                  }
+                  v.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                      override fun onViewAttachedToWindow(view: View) {
+                          if (!a.isStarted) a.start()
+                      }
+
+                      override fun onViewDetachedFromWindow(view: View) {
+                          a.cancel()
+                      }
+                  })
+                  if (v.isAttachedToWindow) a.start()
+              }
+
+              private fun labelView(text: String): TextView {
+                  return TextView(this).apply {
+                      this.text = text
+                      textSize = 12f
+                      setTextColor(Color.WHITE)
+                      setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
+                      maxLines = 1
+                      ellipsize = TextUtils.TruncateAt.END
+                      gravity = Gravity.CENTER
+                      setPadding(dp(2), dp(5), dp(2), 0)
+                  }
+              }
+
+              private fun entryCell(e: Entry): View {
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(0, dp(8), 0, 0)
+                  }
+                  val holder = FrameLayout(this)
+                  val name: String
+                  when (e) {
+                      is Entry.App -> {
+                          val a = apps[e.pkg] ?: return View(this)
+                          holder.addView(roundIcon(a.icon, iconPx), FrameLayout.LayoutParams(iconPx, iconPx))
+                          name = a.label
+                          if (editing) {
+                              val badge = TextView(this).apply {
+                                  text = "−"
+                                  textSize = 15f
+                                  typeface = Typeface.DEFAULT_BOLD
+                                  setTextColor(Color.WHITE)
+                                  gravity = Gravity.CENTER
+                                  background = GradientDrawable().apply {
+                                      shape = GradientDrawable.OVAL
+                                      setColor(0xFF8E8E93.toInt())
+                                  }
+                                  setOnClickListener {
+                                      showMenu(a.label) {
+                                          add("Remover da Tela de Início") { hideApp(a.pkg) }
+                                          add("Apagar app") { uninstall(a.pkg) }
+                                      }
+                                  }
+                              }
+                              holder.addView(badge, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.START))
+                          }
+                      }
+                      is Entry.Folder -> {
+                          holder.addView(folderIconView(e), FrameLayout.LayoutParams(iconPx, iconPx))
+                          name = e.name
+                      }
+                  }
+                  col.addView(holder, LinearLayout.LayoutParams(iconPx, iconPx))
+                  col.addView(labelView(name), LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  col.setOnClickListener { v ->
+                      if (!editing) {
+                          when (e) {
+                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
+                              is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e)
+                          }
+                      }
+                  }
+                  col.setOnLongClickListener { v ->
+                      v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                      if (editing) {
+                          startDrag(v, e)
+                      } else {
+                          when (e) {
+                              is Entry.App -> appMenu(e.pkg, Where.HOME)
+                              is Entry.Folder -> folderMenu(e)
+                          }
+                      }
+                      true
+                  }
+                  if (editing) wiggle(col)
+                  return col
+              }
+
+              // ================= Arrastar e soltar =================
+
+              private fun startDrag(v: View, e: Entry) {
+                  dragEntry = e
+                  dragSource = v
+                  v.alpha = 0.3f
+                  v.startDragAndDrop(ClipData.newPlainText("e", "e"), View.DragShadowBuilder(v), null, 0)
+              }
+
+              private fun maybeFlip(v: View, ev: DragEvent) {
+                  val now = System.currentTimeMillis()
+                  if (now - lastFlip < 800) return
+                  val loc = IntArray(2)
+                  v.getLocationOnScreen(loc)
+                  val x = loc[0] + ev.x
+                  val w = resources.displayMetrics.widthPixels
+                  val cur = pager.currentItem
+                  if (x < dp(28) && cur > 1) {
+                      pager.setCurrentItem(cur - 1, true)
+                      lastFlip = now
+                  } else if (x > w - dp(28) && cur < homePages.size) {
+                      pager.setCurrentItem(cur + 1, true)
+                      lastFlip = now
+                  }
+              }
+
+              private fun slotListener(target: Entry?, hp: Int): View.OnDragListener {
+                  return View.OnDragListener { v, ev ->
+                      when (ev.action) {
+                          DragEvent.ACTION_DRAG_STARTED -> dragEntry != null
+                          DragEvent.ACTION_DRAG_LOCATION -> {
+                              maybeFlip(v, ev)
+                              true
+                          }
+                          DragEvent.ACTION_DROP -> {
+                              val w = if (v.width > 0) v.width else 1
+                              val zone = when {
+                                  ev.x < w * 0.25f -> -1
+                                  ev.x > w * 0.75f -> 1
+                                  else -> 0
+                              }
+                              val d = dragEntry
+                              v.post { handleDrop(d, target, zone, hp) }
+                              true
+                          }
+                          DragEvent.ACTION_DRAG_ENDED -> {
+                              dragSource?.alpha = 1f
+                              dragSource = null
+                              dragEntry = null
+                              true
+                          }
+                          else -> true
+                      }
+                  }
+              }
+
+              private fun handleDrop(d: Entry?, target: Entry?, zone: Int, hp: Int) {
+                  if (d == null || d === target) {
+                      rebuild()
+                      return
+                  }
+                  val per = COLS * rows
+                  val dIdx = home.indexOfFirst { it === d }
+                  if (dIdx < 0) {
+                      rebuild()
+                      return
+                  }
+                  if (target == null) {
+                      var tIdx = Math.min(home.size, (hp + 1) * per)
+                      home.removeAt(dIdx)
+                      if (dIdx < tIdx) tIdx--
+                      home.add(tIdx.coerceIn(0, home.size), d)
+                  } else {
+                      val tIdx = home.indexOfFirst { it === target }
+                      if (tIdx < 0) {
+                          rebuild()
+                          return
+                      }
+                      if (zone == 0 && d is Entry.App && target is Entry.App) {
+                          home[tIdx] = Entry.Folder("Pasta", mutableListOf(target.pkg, d.pkg))
+                          home.removeAt(dIdx)
+                      } else if (zone == 0 && d is Entry.App && target is Entry.Folder) {
+                          target.pkgs.add(d.pkg)
+                          home.removeAt(dIdx)
+                      } else {
+                          home.removeAt(dIdx)
+                          val n = home.indexOfFirst { it === target }
+                          home.add(if (zone < 0) n else n + 1, d)
+                      }
+                  }
+                  commit()
+              }
+
+              // ================= Páginas =================
+
+              private fun buildHomePage(hp: Int): View {
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(8), dp(8), dp(8), 0)
+                  }
+                  val items = homePages.getOrNull(hp) ?: emptyList()
+                  for (r in 0 until rows) {
+                      val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      root.addView(row, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                      for (c in 0 until COLS) {
+                          val slot = FrameLayout(this)
+                          val e = items.getOrNull(r * COLS + c)
+                          if (e != null) {
+                              slot.addView(
+                                  entryCell(e),
+                                  FrameLayout.LayoutParams(
+                                      resources.displayMetrics.widthPixels / COLS - dp(6),
+                                      WRAP,
+                                      Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                                  )
+                              )
+                          }
+                          if (editing) slot.setOnDragListener(slotListener(e, hp))
+                          row.addView(slot, LinearLayout.LayoutParams(0, MATCH, 1f))
+                      }
+                  }
+                  return root
+              }
+
+              private fun buildDock() {
+                  dock.removeAllViews()
+                  for (pk in dockPkgs) {
+                      val a = apps[pk] ?: continue
+                      val frame = FrameLayout(this)
+                      val iv = roundIcon(a.icon, iconPx)
+                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnLongClickListener {
+                          it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                          appMenu(a.pkg, Where.DOCK)
+                          true
+                      }
+                      frame.addView(iv, FrameLayout.LayoutParams(iconPx, iconPx, Gravity.CENTER))
+                      dock.addView(frame, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  }
+                  dock.visibility = if (dockPkgs.isEmpty()) View.GONE else View.VISIBLE
+              }
+
+              private fun updateDots(selected: Int) {
+                  dots.removeAllViews()
+                  val total = homePages.size + 2
+                  for (i in 0 until total) {
+                      val d = View(this)
+                      d.background = GradientDrawable().apply {
+                          shape = GradientDrawable.OVAL
+                          setColor(if (i == selected) Color.WHITE else 0x66FFFFFF)
+                      }
+                      dots.addView(d, LinearLayout.LayoutParams(dp(7), dp(7)).apply {
+                          setMargins(dp(4), 0, dp(4), 0)
+                      })
+                  }
+              }
+
+              private fun updatePill() {
+                  val p = pager.currentItem
+                  pill.visibility = if (!editing && p >= 1 && p <= homePages.size) View.VISIBLE else View.INVISIBLE
+              }
+
+              // ---------- Hoje (widgets) ----------
+
+              private fun bar(pct: Int, color: Int): View {
+                  val track = LinearLayout(this)
+                  track.weightSum = 100f
+                  track.background = rounded(0x33FFFFFF, dp(4))
+                  val fill = View(this)
+                  fill.background = rounded(color, dp(4))
+                  track.addView(fill, LinearLayout.LayoutParams(0, MATCH, pct.coerceIn(1, 100).toFloat()))
+                  return track
+              }
+
+              private fun tv(text: String, size: Float, color: Int, bold: Boolean = false): TextView {
+                  return TextView(this).apply {
+                      this.text = text
+                      textSize = size
+                      setTextColor(color)
+                      if (bold) typeface = Typeface.DEFAULT_BOLD
+                  }
+              }
+
+              private fun buildToday(): View {
+                  val w = resources.displayMetrics.widthPixels
+                  val gap = dp(12)
+                  val side = (w - dp(32) - gap) / 2
+
+                  val sv = ScrollView(this)
+                  sv.isVerticalScrollBarEnabled = false
+                  val col = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), dp(8), dp(16), dp(16))
+                  }
+                  sv.addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
+
+                  col.addView(TextClock(this).apply {
+                      format24Hour = "HH:mm"
+                      format12Hour = "h:mm"
+                      textSize = 56f
+                      typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                      setTextColor(Color.WHITE)
+                      setShadowLayer(6f, 0f, 1f, 0x66000000)
+                  }, LinearLayout.LayoutParams(MATCH, WRAP))
+                  col.addView(TextClock(this).apply {
+                      format24Hour = "EEEE, d 'de' MMMM"
+                      format12Hour = "EEEE, d 'de' MMMM"
+                      textSize = 16f
+                      setTextColor(Color.WHITE)
+                      setShadowLayer(6f, 0f, 1f, 0x66000000)
+                  }, LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+
+                  // Calendário
+                  val now = Date()
+                  val cal = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(Color.WHITE, dp(22))
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                  }
+                  cal.addView(tv(
+                      java.text.SimpleDateFormat("EEEE", Locale.getDefault()).format(now).uppercase(),
+                      13f, 0xFFFF3B30.toInt(), true
+                  ))
+                  cal.addView(tv(
+                      java.text.SimpleDateFormat("d", Locale.getDefault()).format(now),
+                      58f, 0xFF111111.toInt()
+                  ).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) })
+                  cal.addView(tv(
+                      java.text.SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(now),
+                      13f, 0xFF6B6B6B.toInt()
+                  ))
+                  row.addView(cal, LinearLayout.LayoutParams(side, side))
+
+                  // Bateria
+                  val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                  val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                  val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+                  val pct = if (level >= 0 && scale > 0) level * 100 / scale else 0
+                  val st = bi?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                  val charging = st == BatteryManager.BATTERY_STATUS_CHARGING || st == BatteryManager.BATTERY_STATUS_FULL
+                  val bat = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(0x99000000.toInt(), dp(22))
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                  }
+                  bat.addView(tv("Bateria", 13f, 0xFFBBBBBB.toInt(), true))
+                  bat.addView(tv("$pct%", 40f, Color.WHITE).apply {
+                      typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                  })
+                  bat.addView(tv(if (charging) "Carregando" else "Em uso", 13f, 0xFFBBBBBB.toInt()))
+                  bat.addView(
+                      bar(pct, if (pct < 20 && !charging) 0xFFFF3B30.toInt() else 0xFF34C759.toInt()),
+                      LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) }
+                  )
+                  row.addView(bat, LinearLayout.LayoutParams(side, side).apply { leftMargin = gap })
+                  col.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(16) })
+
+                  // Armazenamento
+                  var used = 0.0
+                  var total = 1.0
+                  try {
+                      val sf = StatFs(Environment.getDataDirectory().path)
+                      total = sf.blockCountLong.toDouble() * sf.blockSizeLong / 1073741824.0
+                      val free = sf.availableBlocksLong.toDouble() * sf.blockSizeLong / 1073741824.0
+                      used = total - free
+                  } catch (_: Exception) {
+                  }
+                  val sto = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(0x99000000.toInt(), dp(22))
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                  }
+                  sto.addView(tv("Armazenamento", 13f, 0xFFBBBBBB.toInt(), true))
+                  sto.addView(tv("%.1f GB de %.0f GB".format(used, total), 22f, Color.WHITE))
+                  sto.addView(
+                      bar((used / total * 100).toInt(), 0xFF0A84FF.toInt()),
+                      LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) }
+                  )
+                  col.addView(sto, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
+                  return sv
+              }
+
+              // ---------- Biblioteca de Apps ----------
+
+              private fun searchField(hintText: String): EditText {
+                  return EditText(this).apply {
+                      hint = hintText
+                      setHintTextColor(0xAAFFFFFF.toInt())
+                      setTextColor(Color.WHITE)
+                      inputType = InputType.TYPE_CLASS_TEXT
+                      isSingleLine = true
+                      imeOptions = EditorInfo.IME_ACTION_SEARCH
+                      setPadding(dp(16), dp(10), dp(16), dp(10))
+                      background = rounded(0x44FFFFFF, dp(14))
+                  }
+              }
+
+              private fun appRow(a: AppItem, where: Where): View {
+                  val row = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(0, dp(6), 0, dp(6))
+                  }
+                  val size = dp(48)
+                  row.addView(roundIcon(a.icon, size), LinearLayout.LayoutParams(size, size))
+                  row.addView(TextView(this).apply {
+                      text = a.label
+                      textSize = 17f
+                      setTextColor(Color.WHITE)
+                      setPadding(dp(14), 0, 0, 0)
+                  }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  row.setOnClickListener { launch(a, row) }
+                  row.setOnLongClickListener {
+                      appMenu(a.pkg, where)
+                      true
+                  }
+                  return row
+              }
+
+              private fun categoryTile(title: String, list: List<AppItem>, tileW: Int): View {
+                  val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  val padding = dp(12)
+                  val inner = tileW - padding * 2
+                  val gapPx = dp(10)
+                  val mini = (inner - gapPx) / 2
+
+                  fun slot(i: Int): View {
+                      if (i == 3 && list.size > 4) {
+                          val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                          val tiny = (mini - dp(4)) / 2
+                          val rest = list.drop(3).take(4)
+                          for (r in 0 until 2) {
+                              val rr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                              for (c in 0 until 2) {
+                                  val a = rest.getOrNull(r * 2 + c)
+                                  val v: View = if (a != null) roundIcon(a.icon, tiny) else View(this)
+                                  rr.addView(v, LinearLayout.LayoutParams(tiny, tiny).apply { setMargins(1, 1, 1, 1) })
+                              }
+                              box.addView(rr)
+                          }
+                          box.setOnClickListener { openGroup(title, list.map { it.pkg }, null) }
+                          return box
+                      }
+                      val a = list.getOrNull(i) ?: return View(this)
+                      val iv = roundIcon(a.icon, mini)
+                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnLongClickListener {
+                          appMenu(a.pkg, Where.LIBRARY)
+                          true
+                      }
+                      return iv
+                  }
+
+                  val card = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(0x44FFFFFF, dp(24))
+                      setPadding(padding, padding, padding, padding)
+                  }
+                  for (r in 0 until 2) {
+                      val rr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      for (c in 0 until 2) {
+                          rr.addView(slot(r * 2 + c), LinearLayout.LayoutParams(mini, mini).apply {
+                              if (c == 0) rightMargin = gapPx
+                              if (r == 0) bottomMargin = gapPx
+                          })
+                      }
+                      card.addView(rr)
+                  }
+                  col.addView(card, LinearLayout.LayoutParams(tileW, WRAP))
+                  col.addView(TextView(this).apply {
+                      text = title
+                      textSize = 12f
+                      setTextColor(Color.WHITE)
+                      setPadding(dp(6), dp(5), 0, dp(14))
+                  })
+                  return col
+              }
+
+              private fun buildLibrary(): View {
+                  val root = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(0x55000000)
+                      setPadding(dp(16), dp(12), dp(16), 0)
+                  }
+                  val search = searchField("Biblioteca de Apps")
+                  root.addView(search, LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  val tileW = (resources.displayMetrics.widthPixels - dp(32) - dp(14)) / 2
+                  val scroll = ScrollView(this)
+                  scroll.isVerticalScrollBarEnabled = false
+                  val grid = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(0, dp(14), 0, dp(12))
+                  }
+                  scroll.addView(grid, FrameLayout.LayoutParams(MATCH, WRAP))
+
+                  val groups = sorted.groupBy { it.category }
+                  val tiles = CATEGORIES.filter { groups.containsKey(it) }
+                  for (i in tiles.indices step 2) {
+                      val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      r.addView(categoryTile(tiles[i], groups[tiles[i]]!!, tileW))
+                      if (i + 1 < tiles.size) {
+                          r.addView(
+                              categoryTile(tiles[i + 1], groups[tiles[i + 1]]!!, tileW),
+                              LinearLayout.LayoutParams(tileW, WRAP).apply { leftMargin = dp(14) }
+                          )
+                      }
+                      grid.addView(r)
+                  }
+
+                  val shown = mutableListOf<AppItem>()
+                  val list = ListView(this)
+                  list.divider = null
+                  list.setSelector(android.R.color.transparent)
+                  list.visibility = View.GONE
+                  val adapter = object : BaseAdapter() {
+                      override fun getCount() = shown.size
+                      override fun getItem(p: Int): Any = shown[p]
+                      override fun getItemId(p: Int) = p.toLong()
+                      override fun getView(p: Int, convert: View?, parent: ViewGroup): View =
+                          appRow(shown[p], Where.LIBRARY)
+                  }
+                  list.adapter = adapter
+
+                  search.doAfterTextChanged { s ->
+                      val q = s?.toString().orEmpty().trim()
+                      if (q.isEmpty()) {
+                          scroll.visibility = View.VISIBLE
+                          list.visibility = View.GONE
+                      } else {
+                          shown.clear()
+                          shown.addAll(sorted.filter { it.label.contains(q, ignoreCase = true) })
+                          adapter.notifyDataSetChanged()
+                          scroll.visibility = View.GONE
+                          list.visibility = View.VISIBLE
+                      }
+                  }
+                  root.addView(scroll, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  root.addView(list, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  return root
+              }
+
+              // ================= Overlays =================
+
+              private fun hideKeyboard(v: View) {
+                  val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                  imm.hideSoftInputFromWindow(v.windowToken, 0)
+              }
+
+              private fun openGroup(title: String, pkgs: List<String>, folder: Entry.Folder?) {
+                  if (searchOverlay != null) closeSearch()
+                  if (groupOverlay != null) closeGroup()
+
+                  val ov = FrameLayout(this)
+                  ov.setBackgroundColor(0xAA000000.toInt())
+                  ov.isClickable = true
+                  ov.setOnClickListener { closeGroup() }
+
+                  val panelW = (resources.displayMetrics.widthPixels * 0.9f).toInt()
+                  val panel = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(dp(12), dp(16), dp(12), dp(16))
+                      background = rounded(0xCC3A3A3C.toInt(), dp(30))
+                      isClickable = true
+                  }
+                  val titleV: TextView = if (folder != null) EditText(this) else TextView(this)
+                  titleV.apply {
+                      text = title
+                      textSize = 22f
+                      setTextColor(Color.WHITE)
+                      gravity = Gravity.CENTER
+                      if (folder != null) {
+                          background = null
+                          setSingleLine(true)
+                          inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+                          imeOptions = EditorInfo.IME_ACTION_DONE
+                      }
+                  }
+                  if (folder != null) {
+                      (titleV as EditText).doAfterTextChanged { folder.name = it?.toString().orEmpty() }
+                  }
+                  panel.addView(titleV, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(8) })
+
+                  val sv = ScrollView(this)
+                  sv.isVerticalScrollBarEnabled = false
+                  val g = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  for (chunk in pkgs.chunked(3)) {
+                      val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      for (i in 0 until 3) {
+                          val a = chunk.getOrNull(i)?.let { apps[it] }
+                          val slot = FrameLayout(this)
+                          if (a != null) {
+                              val cell = LinearLayout(this).apply {
+                                  orientation = LinearLayout.VERTICAL
+                                  gravity = Gravity.CENTER_HORIZONTAL
+                                  setPadding(0, dp(8), 0, dp(4))
+                              }
+                              val iv = roundIcon(a.icon, iconPx)
+                              cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
+                              cell.addView(labelView(a.label), LinearLayout.LayoutParams(MATCH, WRAP))
+                              cell.setOnClickListener { launch(a, iv) }
+                              cell.setOnLongClickListener {
+                                  it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                  appMenu(a.pkg, if (folder != null) Where.FOLDER else Where.LIBRARY, folder)
+                                  true
+                              }
+                              slot.addView(cell, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.CENTER_HORIZONTAL))
+                          }
+                          row.addView(slot, LinearLayout.LayoutParams(0, WRAP, 1f))
+                      }
+                      g.addView(row)
+                  }
+                  sv.addView(g, FrameLayout.LayoutParams(MATCH, WRAP))
+                  val maxH = (resources.displayMetrics.heightPixels * 0.55f).toInt()
+                  panel.addView(sv, LinearLayout.LayoutParams(MATCH, WRAP).apply { })
+                  sv.post {
+                      if (sv.height > maxH) {
+                          val lp = sv.layoutParams
+                          lp.height = maxH
+                          sv.layoutParams = lp
+                      }
+                  }
+
+                  ov.addView(panel, FrameLayout.LayoutParams(panelW, WRAP, Gravity.CENTER))
+                  content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
+                  groupOverlay = ov
+                  groupFolder = folder
+
+                  ov.alpha = 0f
+                  panel.scaleX = 0.85f
+                  panel.scaleY = 0.85f
+                  ov.animate().alpha(1f).setDuration(180).start()
+                  panel.animate().scaleX(1f).scaleY(1f).setDuration(180).start()
+              }
+
+              private fun closeGroup() {
+                  val ov = groupOverlay ?: return
+                  hideKeyboard(ov)
+                  content.removeView(ov)
+                  groupOverlay = null
+                  groupFolder = null
+                  normalize()
+                  saveAll()
+                  rebuild()
+              }
+
+              private fun openSearch() {
+                  if (searchOverlay != null) return
+                  if (groupOverlay != null) closeGroup()
+
+                  val ov = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(0xEE000000.toInt())
+                      setPadding(dp(16), dp(12), dp(16), 0)
+                      isClickable = true
+                  }
+                  val bar = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  val et = searchField("Pesquisar")
+                  val cancel = TextView(this).apply {
+                      text = "Cancelar"
+                      textSize = 16f
+                      setTextColor(0xFF0A84FF.toInt())
+                      setPadding(dp(14), dp(8), 0, dp(8))
+                      setOnClickListener { closeSearch() }
+                  }
+                  bar.addView(et, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  bar.addView(cancel, LinearLayout.LayoutParams(WRAP, WRAP))
+                  ov.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  val shown = mutableListOf<AppItem>()
+                  var webQuery = ""
+                  val list = ListView(this)
+                  list.divider = null
+                  list.setSelector(android.R.color.transparent)
+                  val adapter = object : BaseAdapter() {
+                      override fun getCount() = shown.size + (if (webQuery.isNotEmpty()) 1 else 0)
+                      override fun getItem(p: Int): Any = p
+                      override fun getItemId(p: Int) = p.toLong()
+                      override fun getView(p: Int, convert: View?, parent: ViewGroup): View {
+                          if (p < shown.size) return appRow(shown[p], Where.SEARCH)
+                          val t = TextView(this@MainActivity)
+                          t.text = "Pesquisar na web por “$webQuery”"
+                          t.textSize = 16f
+                          t.setTextColor(0xFF0A84FF.toInt())
+                          t.setPadding(0, dp(14), 0, dp(14))
+                          val q = webQuery
+                          t.setOnClickListener {
+                              try {
+                                  startActivity(
+                                      Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q)))
+                                          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                  )
+                                  closeSearch()
+                              } catch (_: Exception) {
+                              }
+                          }
+                          return t
+                      }
+                  }
+                  list.adapter = adapter
+                  et.doAfterTextChanged { s ->
+                      val q = s?.toString().orEmpty().trim()
+                      webQuery = q
+                      shown.clear()
+                      if (q.isNotEmpty()) {
+                          shown.addAll(sorted.filter { it.label.contains(q, ignoreCase = true) }.take(12))
+                      }
+                      adapter.notifyDataSetChanged()
+                  }
+                  et.setOnEditorActionListener { _, id, _ ->
+                      if (id == EditorInfo.IME_ACTION_SEARCH && shown.isNotEmpty()) {
+                          launch(shown[0], null)
+                          true
+                      } else false
+                  }
+                  ov.addView(list, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(8) })
+
+                  content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
+                  searchOverlay = ov
+                  ov.alpha = 0f
+                  ov.animate().alpha(1f).setDuration(160).start()
+                  et.requestFocus()
+                  et.postDelayed({
+                      val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+                      imm.showSoftInput(et, InputMethodManager.SHOW_IMPLICIT)
+                  }, 200)
+              }
+
+              private fun closeSearch() {
+                  val ov = searchOverlay ?: return
+                  hideKeyboard(ov)
+                  content.removeView(ov)
+                  searchOverlay = null
+              }
+
+              // ================= Pager =================
+
+              private class VH(v: View) : RecyclerView.ViewHolder(v)
+
+              private inner class PageAdapter : RecyclerView.Adapter<VH>() {
+                  override fun getItemCount() = homePages.size + 2
+                  override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                      val f = FrameLayout(parent.context)
+                      f.layoutParams = ViewGroup.LayoutParams(MATCH, MATCH)
+                      return VH(f)
+                  }
+
+                  override fun onBindViewHolder(holder: VH, position: Int) {
+                      val f = holder.itemView as FrameLayout
+                      f.removeAllViews()
+                      val page = when {
+                          position == 0 -> buildToday()
+                          position == homePages.size + 1 -> buildLibrary()
+                          else -> buildHomePage(position - 1)
+                      }
+                      f.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
+                  }
+              }
+          }
+          EOF_FILE
+      - name: Compilar APK
+        working-directory: proj
+        run: gradle assembleDebug --no-daemon
+
+      - name: Renomear APK
+        run: cp proj/app/build/outputs/apk/debug/app-debug.apk iLauncher.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iLauncher-APK
+          path: iLauncher.apk
+
+      - name: Publicar na aba Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: iLauncher v${{ github.run_number }}
+          files: iLauncher.apk
