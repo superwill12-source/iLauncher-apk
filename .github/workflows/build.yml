@@ -214,6 +214,385 @@ jobs:
               }
           }
           EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/Icons.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.graphics.Bitmap
+          import android.graphics.BitmapShader
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.ColorFilter
+          import android.graphics.LinearGradient
+          import android.graphics.Paint
+          import android.graphics.Path
+          import android.graphics.PixelFormat
+          import android.graphics.RectF
+          import android.graphics.Shader
+          import android.graphics.Typeface
+          import android.graphics.drawable.AdaptiveIconDrawable
+          import android.graphics.drawable.Drawable
+          import java.text.SimpleDateFormat
+          import java.util.Calendar
+          import java.util.Date
+          import java.util.Locale
+
+          object Icons {
+
+              fun build(label: String, pkg: String, base: Drawable): Drawable =
+                  IosIcon(kindOf(label, pkg), base)
+
+              fun kindOf(label: String, pkg: String): String {
+                  val p = pkg.lowercase()
+                  val l = label.lowercase()
+                  return when {
+                      p.contains("dialer") || p.endsWith(".phone") || l == "telefone" || l == "phone" -> "phone"
+                      p.contains("mms") || p.contains("messaging") || l == "mensagens" || l == "messages" || l == "sms" -> "messages"
+                      p.contains("camera") || l == "câmera" || l == "camera" -> "camera"
+                      p == "com.android.settings" || l == "configurações" || l == "settings" || l == "ajustes" -> "settings"
+                      p.contains("clock") || l == "relógio" || l == "clock" -> "clock"
+                      p.contains("calculator") || p.contains("calc") -> "calculator"
+                      p.contains("chrome") || p.contains("browser") || p.contains("firefox") ||
+                          p.contains("brave") || p.contains("opera") || p.contains("msedge") -> "browser"
+                      p.contains("gallery") || p.contains("photos") || l == "galeria" || l == "fotos" -> "photos"
+                      p.contains("calendar") || l == "agenda" || l == "calendário" -> "calendar"
+                      p.contains("notes") || p.contains("keep") || p.contains("notepad") || l == "notas" -> "notes"
+                      p.contains(".maps") || l == "maps" || l == "mapas" -> "maps"
+                      p.contains("gmail") || p.endsWith(".gm") || p.contains("mail") -> "mail"
+                      p.contains("music") || l == "música" -> "music"
+                      p.contains("contacts") || l == "contatos" -> "contacts"
+                      else -> "default"
+                  }
+              }
+
+              // Forma "squircle" (superelipse) usada pelo iOS
+              fun squircle(size: Float): Path {
+                  val path = Path()
+                  val n = 5.0
+                  val a = size / 2f
+                  val steps = 160
+                  for (i in 0..steps) {
+                      val t = 2.0 * Math.PI * i / steps
+                      val ct = Math.cos(t)
+                      val st = Math.sin(t)
+                      val x = a + a * Math.signum(ct) * Math.pow(Math.abs(ct), 2.0 / n)
+                      val y = a + a * Math.signum(st) * Math.pow(Math.abs(st), 2.0 / n)
+                      if (i == 0) path.moveTo(x.toFloat(), y.toFloat()) else path.lineTo(x.toFloat(), y.toFloat())
+                  }
+                  path.close()
+                  return path
+              }
+          }
+
+          class IosIcon(private val kind: String, private val base: Drawable) : Drawable() {
+
+              private val SIZE = 192
+              private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+              private var cache: Bitmap? = null
+              private var cacheKey = ""
+
+              override fun getIntrinsicWidth() = SIZE
+              override fun getIntrinsicHeight() = SIZE
+
+              override fun draw(canvas: Canvas) {
+                  val key = if (kind == "clock" || kind == "calendar") {
+                      SimpleDateFormat("yyyyMMddHHmm", Locale.US).format(Date())
+                  } else kind
+                  val cached = cache
+                  val b = if (cached != null && key == cacheKey) cached else render().also {
+                      cache = it
+                      cacheKey = key
+                  }
+                  canvas.drawBitmap(b, null, bounds, paint)
+              }
+
+              override fun setAlpha(alpha: Int) {
+                  paint.alpha = alpha
+              }
+
+              override fun setColorFilter(colorFilter: ColorFilter?) {
+                  paint.colorFilter = colorFilter
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun getOpacity() = PixelFormat.TRANSLUCENT
+
+              // ---------- util ----------
+
+              private fun k(v: Long): Int = v.toInt()
+
+              private fun pt(color: Int, stroke: Float = 0f): Paint {
+                  val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                  p.color = color
+                  if (stroke > 0f) {
+                      p.style = Paint.Style.STROKE
+                      p.strokeWidth = stroke
+                      p.strokeCap = Paint.Cap.ROUND
+                  }
+                  return p
+              }
+
+              private fun gradient(c: Canvas, top: Int, bottom: Int) {
+                  val p = Paint()
+                  p.shader = LinearGradient(0f, 0f, 0f, 256f, top, bottom, Shader.TileMode.CLAMP)
+                  c.drawRect(0f, 0f, 256f, 256f, p)
+              }
+
+              private fun render(): Bitmap {
+                  val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+                  val c = Canvas(raw)
+                  c.scale(SIZE / 256f, SIZE / 256f)
+                  when (kind) {
+                      "phone" -> phone(c)
+                      "messages" -> messages(c)
+                      "camera" -> camera(c)
+                      "settings" -> settings(c)
+                      "clock" -> clock(c)
+                      "calculator" -> calculator(c)
+                      "browser" -> browser(c)
+                      "photos" -> photos(c)
+                      "calendar" -> calendar(c)
+                      "notes" -> notes(c)
+                      "maps" -> maps(c)
+                      "mail" -> mail(c)
+                      "music" -> music(c)
+                      "contacts" -> contacts(c)
+                      else -> wrap(c)
+                  }
+                  val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+                  val oc = Canvas(out)
+                  val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                  p.shader = BitmapShader(raw, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                  oc.drawPath(Icons.squircle(SIZE.toFloat()), p)
+                  return out
+              }
+
+              // ---------- ícone padrão: ícone do app dentro do squircle ----------
+
+              private fun wrap(c: Canvas) {
+                  gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
+                  val b = base
+                  if (b is AdaptiveIconDrawable) {
+                      val big = 384
+                      val off = (256 - big) / 2
+                      b.background?.let {
+                          it.setBounds(off, off, off + big, off + big)
+                          it.draw(c)
+                      }
+                      b.foreground?.let {
+                          it.setBounds(off, off, off + big, off + big)
+                          it.draw(c)
+                      }
+                  } else {
+                      b.setBounds(34, 34, 222, 222)
+                      b.draw(c)
+                  }
+              }
+
+              // ---------- ícones estilo iOS ----------
+
+              private fun phone(c: Canvas) {
+                  gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
+                  val w = pt(Color.WHITE, 34f)
+                  c.drawArc(RectF(70f, 26f, 230f, 186f), 85f, 100f, false, w)
+                  val f = pt(Color.WHITE)
+                  c.drawCircle(157f, 186f, 26f, f)
+                  c.drawCircle(70f, 99f, 26f, f)
+              }
+
+              private fun messages(c: Canvas) {
+                  gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
+                  val w = pt(Color.WHITE)
+                  c.drawOval(RectF(40f, 50f, 216f, 180f), w)
+                  val t = Path()
+                  t.moveTo(78f, 160f)
+                  t.lineTo(54f, 214f)
+                  t.lineTo(122f, 176f)
+                  t.close()
+                  c.drawPath(t, w)
+              }
+
+              private fun camera(c: Canvas) {
+                  gradient(c, k(0xFFD8D8DD), k(0xFF9A9AA0))
+                  val dark = pt(k(0xFF1C1C1E))
+                  c.drawRoundRect(RectF(36f, 84f, 220f, 198f), 26f, 26f, dark)
+                  c.drawRoundRect(RectF(92f, 64f, 148f, 96f), 10f, 10f, dark)
+                  c.drawCircle(128f, 142f, 42f, pt(k(0xFFCFCFD4), 10f))
+                  c.drawCircle(128f, 142f, 30f, pt(k(0xFF3A3A3C)))
+                  c.drawCircle(192f, 108f, 7f, pt(k(0xFFFFD60A)))
+              }
+
+              private fun settings(c: Canvas) {
+                  gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
+                  val g = pt(k(0xFF3A3A3C))
+                  for (i in 0 until 8) {
+                      c.save()
+                      c.rotate(i * 45f, 128f, 128f)
+                      c.drawRoundRect(RectF(110f, 34f, 146f, 84f), 8f, 8f, g)
+                      c.restore()
+                  }
+                  c.drawCircle(128f, 128f, 70f, g)
+                  c.drawCircle(128f, 128f, 32f, pt(k(0xFFAEAEB2)))
+              }
+
+              private fun hand(c: Canvas, angle: Float, len: Float, w: Float, color: Int) {
+                  c.save()
+                  c.rotate(angle, 128f, 128f)
+                  c.drawRoundRect(RectF(128f - w / 2, 128f - len, 128f + w / 2, 138f), w / 2, w / 2, pt(color))
+                  c.restore()
+              }
+
+              private fun clock(c: Canvas) {
+                  c.drawColor(Color.BLACK)
+                  c.drawCircle(128f, 128f, 114f, pt(Color.WHITE))
+                  for (i in 0 until 12) {
+                      c.save()
+                      c.rotate(i * 30f, 128f, 128f)
+                      val len = if (i % 3 == 0) 22f else 14f
+                      c.drawRect(124f, 28f, 132f, 28f + len, pt(k(0xFF1C1C1E)))
+                      c.restore()
+                  }
+                  val cal = Calendar.getInstance()
+                  val h = cal.get(Calendar.HOUR) % 12
+                  val m = cal.get(Calendar.MINUTE)
+                  hand(c, (h + m / 60f) * 30f, 62f, 12f, k(0xFF1C1C1E))
+                  hand(c, m * 6f, 92f, 9f, k(0xFF1C1C1E))
+                  c.drawCircle(128f, 128f, 9f, pt(k(0xFFFF9F0A)))
+              }
+
+              private fun calculator(c: Canvas) {
+                  gradient(c, k(0xFF3A3A3C), k(0xFF1C1C1E))
+                  c.drawRoundRect(RectF(28f, 30f, 228f, 78f), 10f, 10f, pt(Color.BLACK))
+                  for (r in 0 until 3) {
+                      for (col in 0 until 4) {
+                          val x = 28f + col * 52f
+                          val y = 90f + r * 48f
+                          val color = when {
+                              col == 3 -> k(0xFFFF9F0A)
+                              r == 0 -> k(0xFFA5A5A5)
+                              else -> k(0xFF636366)
+                          }
+                          c.drawRoundRect(RectF(x, y, x + 44f, y + 40f), 12f, 12f, pt(color))
+                      }
+                  }
+              }
+
+              private fun browser(c: Canvas) {
+                  gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
+                  c.drawCircle(128f, 128f, 96f, pt(Color.WHITE, 8f))
+                  for (i in 0 until 12) {
+                      c.save()
+                      c.rotate(i * 30f, 128f, 128f)
+                      val len = if (i % 3 == 0) 18f else 10f
+                      c.drawRect(125f, 42f, 131f, 42f + len, pt(Color.WHITE))
+                      c.restore()
+                  }
+                  c.save()
+                  c.rotate(45f, 128f, 128f)
+                  val red = Path()
+                  red.moveTo(128f, 52f)
+                  red.lineTo(110f, 128f)
+                  red.lineTo(146f, 128f)
+                  red.close()
+                  c.drawPath(red, pt(k(0xFFFF3B30)))
+                  val white = Path()
+                  white.moveTo(128f, 204f)
+                  white.lineTo(110f, 128f)
+                  white.lineTo(146f, 128f)
+                  white.close()
+                  c.drawPath(white, pt(Color.WHITE))
+                  c.restore()
+              }
+
+              private fun photos(c: Canvas) {
+                  c.drawColor(Color.WHITE)
+                  val colors = listOf(
+                      k(0xFFFFCC00), k(0xFFFF9500), k(0xFFFF3B30), k(0xFFFF2D55),
+                      k(0xFFAF52DE), k(0xFF007AFF), k(0xFF34C759), k(0xFF5AC8FA)
+                  )
+                  for (i in 0 until 8) {
+                      val rad = Math.toRadians(i * 45.0)
+                      val cx = 128f + (Math.sin(rad) * 50).toFloat()
+                      val cy = 128f - (Math.cos(rad) * 50).toFloat()
+                      val p = pt(colors[i])
+                      p.alpha = 200
+                      c.drawCircle(cx, cy, 42f, p)
+                  }
+              }
+
+              private fun calendar(c: Canvas) {
+                  c.drawColor(Color.WHITE)
+                  val now = Date()
+                  val wd = SimpleDateFormat("EEE", Locale.getDefault()).format(now).uppercase().take(3)
+                  val dd = SimpleDateFormat("d", Locale.getDefault()).format(now)
+                  val t1 = pt(k(0xFFFF3B30))
+                  t1.textSize = 40f
+                  t1.textAlign = Paint.Align.CENTER
+                  t1.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                  c.drawText(wd, 128f, 78f, t1)
+                  val t2 = pt(k(0xFF1C1C1E))
+                  t2.textSize = 150f
+                  t2.textAlign = Paint.Align.CENTER
+                  t2.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                  c.drawText(dd, 128f, 206f, t2)
+              }
+
+              private fun notes(c: Canvas) {
+                  c.drawColor(Color.WHITE)
+                  c.drawRect(0f, 0f, 256f, 62f, pt(k(0xFFFFCC00)))
+                  val line = pt(k(0xFFD1D1D6), 6f)
+                  c.drawLine(40f, 112f, 216f, 112f, line)
+                  c.drawLine(40f, 152f, 216f, 152f, line)
+                  c.drawLine(40f, 192f, 216f, 192f, line)
+              }
+
+              private fun maps(c: Canvas) {
+                  c.drawColor(k(0xFFDDEFD8))
+                  c.drawLine(-10f, 240f, 240f, -10f, pt(Color.WHITE, 40f))
+                  c.drawLine(0f, 170f, 256f, 130f, pt(k(0xFF4A90E2), 22f))
+                  c.drawCircle(170f, 96f, 36f, pt(k(0xFFFF3B30)))
+                  val tip = Path()
+                  tip.moveTo(140f, 118f)
+                  tip.lineTo(200f, 118f)
+                  tip.lineTo(170f, 176f)
+                  tip.close()
+                  c.drawPath(tip, pt(k(0xFFFF3B30)))
+                  c.drawCircle(170f, 96f, 13f, pt(Color.WHITE))
+              }
+
+              private fun mail(c: Canvas) {
+                  gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
+                  c.drawRoundRect(RectF(38f, 72f, 218f, 184f), 16f, 16f, pt(Color.WHITE))
+                  val flap = Path()
+                  flap.moveTo(50f, 86f)
+                  flap.lineTo(128f, 144f)
+                  flap.lineTo(206f, 86f)
+                  c.drawPath(flap, pt(k(0xFF2F90FF), 9f).also { it.strokeJoin = Paint.Join.ROUND })
+              }
+
+              private fun music(c: Canvas) {
+                  gradient(c, k(0xFFFF6B88), k(0xFFFA233B))
+                  val w = pt(Color.WHITE)
+                  c.drawOval(RectF(74f, 154f, 118f, 190f), w)
+                  c.drawOval(RectF(144f, 136f, 188f, 172f), w)
+                  c.drawRect(108f, 76f, 120f, 172f, w)
+                  c.drawRect(178f, 58f, 190f, 154f, w)
+                  val beam = Path()
+                  beam.moveTo(108f, 76f)
+                  beam.lineTo(190f, 58f)
+                  beam.lineTo(190f, 84f)
+                  beam.lineTo(108f, 102f)
+                  beam.close()
+                  c.drawPath(beam, w)
+              }
+
+              private fun contacts(c: Canvas) {
+                  gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
+                  val w = pt(Color.WHITE)
+                  c.drawCircle(128f, 100f, 38f, w)
+                  c.drawOval(RectF(58f, 150f, 198f, 270f), w)
+              }
+          }
+          EOF_FILE
           cat > proj/app/src/main/java/com/ioslauncher/MainActivity.kt <<'EOF_FILE'
           package com.ioslauncher
 
@@ -249,6 +628,8 @@ jobs:
           import android.view.View
           import android.view.ViewGroup
           import android.view.ViewOutlineProvider
+          import android.view.animation.DecelerateInterpolator
+          import android.view.animation.OvershootInterpolator
           import android.view.inputmethod.EditorInfo
           import android.view.inputmethod.InputMethodManager
           import android.widget.BaseAdapter
@@ -325,6 +706,7 @@ jobs:
               private var groupOverlay: View? = null
               private var groupFolder: Entry.Folder? = null
               private var searchOverlay: View? = null
+              private var launchOverlay: ImageView? = null
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
               private val iconPx get() = (resources.displayMetrics.widthPixels / COLS * 0.72f).toInt()
@@ -357,6 +739,13 @@ jobs:
                   pager = ViewPager2(this)
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
+                  pager.setPageTransformer { page, position ->
+                      val a = Math.min(Math.abs(position), 1f)
+                      page.alpha = 1f - 0.5f * a
+                      val sc = 1f - 0.08f * a
+                      page.scaleX = sc
+                      page.scaleY = sc
+                  }
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -437,6 +826,7 @@ jobs:
 
               override fun onResume() {
                   super.onResume()
+                  dismissLaunch(true)
                   refresh()
                   if (loaded) pager.adapter?.notifyItemChanged(0)
               }
@@ -500,7 +890,7 @@ jobs:
                           Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                               .setClassName(pk, ri.activityInfo.name)
                               .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
-                          ri.loadIcon(pm),
+                          Icons.build(ri.loadLabel(pm).toString(), pk, ri.loadIcon(pm)),
                           categoryOf(ri.activityInfo.applicationInfo, pk)
                       )
                   }
@@ -665,22 +1055,57 @@ jobs:
                   }
               }
 
-              private fun launch(a: AppItem, v: View?) {
-                  val opts = try {
-                      if (v != null && v.width > 0) {
-                          ActivityOptions.makeScaleUpAnimation(v, 0, 0, v.width, v.height).toBundle()
-                      } else null
-                  } catch (_: Exception) {
-                      null
-                  }
+              private fun startApp(a: AppItem, opts: Bundle?) {
                   try {
                       startActivity(a.intent, opts)
                   } catch (_: Exception) {
                       Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                      dismissLaunch(false)
                       return
                   }
                   if (searchOverlay != null) closeSearch()
                   if (groupOverlay != null) closeGroup()
+              }
+
+              private fun launch(a: AppItem, v: View?) {
+                  val opts = ActivityOptions.makeCustomAnimation(
+                      this, android.R.anim.fade_in, android.R.anim.fade_out
+                  ).toBundle()
+                  if (v == null || v.width == 0 || launchOverlay != null) {
+                      startApp(a, opts)
+                      return
+                  }
+                  val cl = IntArray(2)
+                  content.getLocationOnScreen(cl)
+                  val vl = IntArray(2)
+                  v.getLocationOnScreen(vl)
+                  val iv = ImageView(this)
+                  iv.setImageDrawable(a.icon)
+                  iv.scaleType = ImageView.ScaleType.FIT_XY
+                  val lp = FrameLayout.LayoutParams(v.width, v.height)
+                  lp.leftMargin = vl[0] - cl[0] - content.paddingLeft
+                  lp.topMargin = vl[1] - cl[1] - content.paddingTop
+                  content.addView(iv, lp)
+                  launchOverlay = iv
+                  val big = resources.displayMetrics.widthPixels * 1.15f / v.width
+                  iv.animate().scaleX(big).scaleY(big).setDuration(240)
+                      .setInterpolator(DecelerateInterpolator(1.3f))
+                      .withEndAction { startApp(a, opts) }
+                      .start()
+                  iv.postDelayed({ if (launchOverlay === iv) dismissLaunch(true) }, 3000)
+              }
+
+              private fun dismissLaunch(animate: Boolean) {
+                  val iv = launchOverlay ?: return
+                  launchOverlay = null
+                  if (animate) {
+                      iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(280)
+                          .setInterpolator(DecelerateInterpolator())
+                          .withEndAction { content.removeView(iv) }
+                          .start()
+                  } else {
+                      content.removeView(iv)
+                  }
               }
 
               private fun setEditing(on: Boolean) {
@@ -733,14 +1158,21 @@ jobs:
 
               private fun roundIcon(d: Drawable, size: Int): ImageView {
                   return ImageView(this).apply {
-                      setImageDrawable(d.constantState?.newDrawable() ?: d)
-                      setBackgroundColor(Color.WHITE)
-                      outlineProvider = object : ViewOutlineProvider() {
-                          override fun getOutline(view: View, outline: Outline) {
-                              outline.setRoundRect(0, 0, view.width, view.height, view.width * 0.225f)
-                          }
+                      setImageDrawable(d)
+                      scaleType = ImageView.ScaleType.FIT_XY
+                  }
+              }
+
+              private fun pressable(v: View) {
+                  v.setOnTouchListener { view, ev ->
+                      when (ev.actionMasked) {
+                          MotionEvent.ACTION_DOWN ->
+                              view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90).setInterpolator(DecelerateInterpolator()).start()
+                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                              view.animate().scaleX(1f).scaleY(1f).setDuration(280)
+                                  .setInterpolator(OvershootInterpolator(2.5f)).start()
                       }
-                      clipToOutline = true
+                      false
                   }
               }
 
@@ -789,7 +1221,8 @@ jobs:
               private fun labelView(text: String): TextView {
                   return TextView(this).apply {
                       this.text = text
-                      textSize = 12f
+                      textSize = 11.5f
+                      typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                       setTextColor(Color.WHITE)
                       setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
                       maxLines = 1
@@ -861,6 +1294,7 @@ jobs:
                       }
                       true
                   }
+                  pressable(col)
                   if (editing) wiggle(col)
                   return col
               }
@@ -995,6 +1429,7 @@ jobs:
                       val a = apps[pk] ?: continue
                       val frame = FrameLayout(this)
                       val iv = roundIcon(a.icon, iconPx)
+                      pressable(iv)
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -1212,6 +1647,7 @@ jobs:
                       }
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
+                      pressable(iv)
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           appMenu(a.pkg, Where.LIBRARY)
@@ -1400,7 +1836,8 @@ jobs:
                   panel.scaleX = 0.85f
                   panel.scaleY = 0.85f
                   ov.animate().alpha(1f).setDuration(180).start()
-                  panel.animate().scaleX(1f).scaleY(1f).setDuration(180).start()
+                  panel.animate().scaleX(1f).scaleY(1f).setDuration(280)
+                      .setInterpolator(OvershootInterpolator(1.1f)).start()
               }
 
               private fun closeGroup() {
@@ -1531,6 +1968,7 @@ jobs:
               }
           }
           EOF_FILE
+
       - name: Compilar APK
         working-directory: proj
         run: gradle assembleDebug --no-daemon
