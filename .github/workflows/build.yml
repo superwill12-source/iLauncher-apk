@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 15
-                  versionName = "3.3"
+                  versionCode = 17
+                  versionName = "4.1"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -79,7 +79,9 @@ jobs:
           EOF_FILE
           cat > proj/app/src/main/AndroidManifest.xml <<'EOF_FILE'
           <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              android:hardwareAccelerated="true"
+              android:largeHeap="true">
 
               <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
@@ -334,6 +336,16 @@ jobs:
               @Deprecated("Deprecated in Java")
               override fun getOpacity() = PixelFormat.TRANSLUCENT
 
+              // ---- SOLUÇÃO PARA O COMPARTILHAMENTO DE DRAWABLE ----
+              // Garante que cada ImageView tenha sua própria instância do ícone
+              override fun getConstantState(): ConstantState {
+                  return object : ConstantState() {
+                      override fun newDrawable(): Drawable = IosIcon(kind, base)
+                      override fun getChangingConfigurations(): Int = 0
+                  }
+              }
+              // ----------------------------------------------------
+
               private fun k(v: Long): Int = v.toInt()
 
               private fun pt(color: Int, stroke: Float = 0f): Paint {
@@ -382,14 +394,11 @@ jobs:
                   return out
               }
 
-              // ========== ZOOM FIXO E CENTRALIZADO ==========
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
 
                   if (b is AdaptiveIconDrawable) {
-                      // O Android define a área útil do ícone como 72dp num canvas de 108dp.
-                      // Para preencher o quadrado inteiro, aplicamos um zoom de 108/72 = 1.5x.
                       c.save()
                       c.scale(1.5f, 1.5f, 128f, 128f)
                       b.background?.let {
@@ -402,8 +411,6 @@ jobs:
                       }
                       c.restore()
                   } else {
-                      // Ícones legados (que já vêm com tamanho cheio) recebem um zoom sutil
-                      // de 1.2x para eliminar qualquer borda transparente.
                       c.save()
                       c.scale(1.2f, 1.2f, 128f, 128f)
                       b.setBounds(0, 0, 256, 256)
@@ -411,7 +418,6 @@ jobs:
                       c.restore()
                   }
               }
-              // ==============================================
 
               private fun phone(c: Canvas) {
                   gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
@@ -619,8 +625,6 @@ jobs:
           cat > proj/app/src/main/java/com/ioslauncher/MainActivity.kt <<'EOF_FILE'
           package com.ioslauncher
 
-          import android.animation.ObjectAnimator
-          import android.animation.ValueAnimator
           import android.app.Activity
           import android.app.ActivityOptions
           import android.app.AlertDialog
@@ -654,8 +658,6 @@ jobs:
           import android.view.MotionEvent
           import android.view.View
           import android.view.ViewGroup
-          import android.view.animation.DecelerateInterpolator
-          import android.view.animation.OvershootInterpolator
           import android.view.inputmethod.EditorInfo
           import android.view.inputmethod.InputMethodManager
           import android.widget.BaseAdapter
@@ -768,8 +770,6 @@ jobs:
                   pager = ViewPager2(this)
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
-                  pager.offscreenPageLimit = 1
-                  // Removido qualquer PageTransformer para evitar alteração de escala.
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -1036,7 +1036,6 @@ jobs:
                   val per = COLS * rows
                   homePages = home.chunked(per).ifEmpty { listOf(emptyList<Entry>()) }
                   pager.adapter?.notifyDataSetChanged()
-                  pager.offscreenPageLimit = 1
                   if (!positioned && loaded) {
                       pager.setCurrentItem(1, false)
                       positioned = true
@@ -1103,7 +1102,6 @@ jobs:
                   }
               }
 
-              // Launch direto, SEM efeitos de escala ou overlay
               private fun launch(a: AppItem, anchor: View? = null) {
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
@@ -1166,16 +1164,13 @@ jobs:
 
               // ================= Ícones =================
 
+              // Clona o Drawable para evitar conflito de "bounds" entre views (Home, Dock, Pasta)
               private fun roundIcon(d: Drawable, size: Int): ImageView {
                   return ImageView(this).apply {
-                      setImageDrawable(d)
+                      val copy = d.constantState?.newDrawable()?.mutate() ?: d
+                      setImageDrawable(copy)
                       scaleType = ImageView.ScaleType.FIT_XY
                   }
-              }
-
-              // Efeito de toque completamente removido. Nenhuma view altera seu tamanho.
-              private fun pressable(v: View) {
-                  // Intencionalmente vazio (sem alteração de escala/alpha)
               }
 
               private fun folderIconView(f: Entry.Folder): View {
@@ -1199,26 +1194,6 @@ jobs:
                   }
                   box.addView(grid, FrameLayout.LayoutParams(MATCH, MATCH))
                   return box
-              }
-
-              private fun wiggle(v: View) {
-                  val a = ObjectAnimator.ofFloat(v, View.ROTATION, -2.2f, 2.2f).apply {
-                      duration = 100L + (Math.random() * 40).toLong()
-                      repeatCount = ValueAnimator.INFINITE
-                      repeatMode = ValueAnimator.REVERSE
-                      startDelay = (Math.random() * 100).toLong()
-                  }
-                  v.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                      override fun onViewAttachedToWindow(view: View) {
-                          if (!a.isStarted) a.start()
-                      }
-
-                      override fun onViewDetachedFromWindow(view: View) {
-                          a.cancel()
-                      }
-                  })
-                  v.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                  if (v.isAttachedToWindow) a.start()
               }
 
               private fun labelView(text: String): TextView {
@@ -1297,7 +1272,6 @@ jobs:
                       }
                       true
                   }
-                  if (editing) wiggle(col)
                   return col
               }
 
@@ -1443,11 +1417,7 @@ jobs:
                       val frame = FrameLayout(this)
                       frame.layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
 
-                      val iv = ImageView(this).apply {
-                          setImageDrawable(a.icon)
-                          scaleType = ImageView.ScaleType.FIT_XY
-                      }
-
+                      val iv = roundIcon(a.icon, dockIconSize)
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -1831,7 +1801,8 @@ jobs:
                   }
                   val iv = row.getChildAt(0) as ImageView
                   val tv = row.getChildAt(1) as TextView
-                  iv.setImageDrawable(a.icon)
+                  val copy = a.icon.constantState?.newDrawable()?.mutate() ?: a.icon
+                  iv.setImageDrawable(copy)
                   tv.text = a.label
                   row.setOnClickListener { launch(a, row) }
                   row.setOnLongClickListener {
@@ -2063,16 +2034,6 @@ jobs:
                   }
                   groupOverlay = ov
                   groupFolder = folder
-
-                  ov.alpha = 0f
-                  panel.scaleX = 0.85f
-                  panel.scaleY = 0.85f
-                  panel.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                  ov.animate().alpha(1f).setDuration(180).start()
-                  panel.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                      .setInterpolator(OvershootInterpolator(1.1f))
-                      .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
-                      .start()
               }
 
               private fun closeGroup() {
