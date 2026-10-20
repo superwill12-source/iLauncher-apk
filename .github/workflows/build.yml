@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 11
-                  versionName = "2.9"
+                  versionCode = 12
+                  versionName = "3.0"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -382,33 +382,87 @@ jobs:
                   return out
               }
 
-              // ========== WRAP com ZOOM 1.25x + clipping ==========
-              // O ícone do Android tem 15% de "safe zone" (margem). Aplicar zoom
-              // faz o ícone preencher uniformemente o squircle. O BitmapShader
-              // do squircle faz o clipping, cortando o excesso nas bordas.
+              private fun drawBaseContent(c: Canvas, b: Drawable) {
+                  if (b is AdaptiveIconDrawable) {
+                      b.background?.let {
+                          it.setBounds(0, 0, 256, 256)
+                          it.draw(c)
+                      }
+                      b.foreground?.let {
+                          it.setBounds(0, 0, 256, 256)
+                          it.draw(c)
+                      }
+                  } else {
+                      b.setBounds(0, 0, 256, 256)
+                      b.draw(c)
+                  }
+              }
+
+              // ========== WRAP COM ZOOM DINÂMICO (FIM DO ÍCONE PEQUENO) ==========
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
 
-                  val zoom = 1.25f
-                  val big = (256 * zoom).toInt()  // 320
-                  val off = (256 - big) / 2       // -32
-                  
-                  if (b is AdaptiveIconDrawable) {
-                      b.background?.let {
-                          it.setBounds(off, off, off + big, off + big)
-                          it.draw(c)
-                      }
-                      b.foreground?.let {
-                          it.setBounds(off, off, off + big, off + big)
-                          it.draw(c)
-                      }
+                  // Determina qual drawable usar para a bounding box (o foreground
+                  // é onde fica o desenho real do ícone adaptativo; o background é só cor).
+                  val contentDrawable: Drawable = if (b is AdaptiveIconDrawable) {
+                      b.foreground ?: b
                   } else {
-                      b.setBounds(off, off, off + big, off + big)
-                      b.draw(c)
+                      b
+                  }
+
+                  // 1. Desenha o conteúdo em um bitmap pequeno (64x64) para encontrar a
+                  //    bounding box do desenho. 64x64 é rápido e suficiente.
+                  val tmpSize = 64
+                  val tmp = Bitmap.createBitmap(tmpSize, tmpSize, Bitmap.Config.ARGB_8888)
+                  val tc = Canvas(tmp)
+                  val s = tmpSize / 256f
+                  tc.scale(s, s)
+                  contentDrawable.setBounds(0, 0, 256, 256)
+                  contentDrawable.draw(tc)
+
+                  var minX = tmpSize
+                  var minY = tmpSize
+                  var maxX = -1
+                  var maxY = -1
+                  val pixels = IntArray(tmpSize * tmpSize)
+                  tmp.getPixels(pixels, 0, tmpSize, 0, 0, tmpSize, tmpSize)
+                  for (y in 0 until tmpSize) {
+                      for (x in 0 until tmpSize) {
+                          val alpha = (pixels[y * tmpSize + x] ushr 24) and 0xFF
+                          if (alpha > 10) { // ignora anti-aliasing
+                              if (x < minX) minX = x
+                              if (x > maxX) maxX = x
+                              if (y < minY) minY = y
+                              if (y > maxY) maxY = y
+                          }
+                      }
+                  }
+                  tmp.recycle()
+
+                  // 2. Aplica zoom e translação para que a bounding box preencha 90% do
+                  //    squircle (deixa uma pequena margem, igual ao iOS).
+                  if (maxX >= 0) {
+                      val boxW = (maxX - minX + 1) / s
+                      val boxH = (maxY - minY + 1) / s
+                      val boxCx = (minX + maxX + 1) / 2f / s
+                      val boxCy = (minY + maxY + 1) / 2f / s
+
+                      val targetSize = 256 * 0.90f
+                      val scale = Math.min(targetSize / boxW, targetSize / boxH)
+
+                      c.save()
+                      c.translate(128f, 128f)
+                      c.scale(scale, scale)
+                      c.translate(-boxCx, -boxCy)
+                      drawBaseContent(c, b)
+                      c.restore()
+                  } else {
+                      // Fallback: não conseguimos medir, desenha sem zoom
+                      drawBaseContent(c, b)
                   }
               }
-              // ===================================================
+              // ===================================================================
 
               private fun phone(c: Canvas) {
                   gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
@@ -735,7 +789,6 @@ jobs:
               private var groupOverlay: View? = null
               private var groupFolder: Entry.Folder? = null
               private var searchOverlay: View? = null
-              private var launchOverlay: ImageView? = null
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
               private val iconPx get() = (resources.displayMetrics.widthPixels / COLS * 0.72f).toInt()
@@ -767,8 +820,7 @@ jobs:
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
-                  // NOTA: setPageTransformer removido para evitar scale < 1 nas páginas adjacentes.
-                  // O efeito de profundidade do iOS não existe mesmo.
+                  // Nenhum PageTransformer: todas as páginas têm scale 1.0 sempre.
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -854,9 +906,7 @@ jobs:
 
               override fun onResume() {
                   super.onResume()
-                  dismissLaunch(true)
                   refresh()
-                  // Garantia final: sem escala animada, mas reset para segurança
                   if (loaded) {
                       pager.postDelayed({
                           pager.adapter?.notifyDataSetChanged()
@@ -882,14 +932,6 @@ jobs:
                       editing -> setEditing(false)
                       pager.currentItem != 1 -> pager.setCurrentItem(1, true)
                   }
-              }
-
-              // ================= Helpers =================
-
-              private fun resetTouchState(v: View?) {
-                  v ?: return
-                  v.animate().cancel()
-                  v.alpha = 1f
               }
 
               // ================= Dados =================
@@ -1112,34 +1154,19 @@ jobs:
                   }
               }
 
-              private fun startApp(a: AppItem, opts: Bundle?) {
+              // Launch direto, sem overlay, sem animação de escala.
+              private fun launch(a: AppItem, anchor: View? = null) {
+                  val opts = ActivityOptions.makeCustomAnimation(
+                      this, android.R.anim.fade_in, android.R.anim.fade_out
+                  ).toBundle()
                   try {
                       startActivity(a.intent, opts)
                   } catch (_: Exception) {
                       Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
-                      dismissLaunch(false)
                       return
                   }
                   if (searchOverlay != null) closeSearch()
                   if (groupOverlay != null) closeGroup()
-              }
-
-              // ===== launch SEM overlay de scale (evita o ícone "congelar" pequeno) =====
-              private fun launch(a: AppItem, anchor: View?, animated: View? = null) {
-                  resetTouchState(animated ?: anchor)
-
-                  val opts = ActivityOptions.makeCustomAnimation(
-                      this, android.R.anim.fade_in, android.R.anim.fade_out
-                  ).toBundle()
-
-                  // Sem animação de scale no overlay, para nunca prender escala.
-                  startApp(a, opts)
-              }
-
-              private fun dismissLaunch(animate: Boolean) {
-                  val iv = launchOverlay ?: return
-                  launchOverlay = null
-                  content.removeView(iv)
               }
 
               private fun setEditing(on: Boolean) {
@@ -1197,13 +1224,13 @@ jobs:
                   }
               }
 
-              // ===== pressable SEM escala (só alpha): impossível encolher =====
+              // Toque suave por opacidade. NUNCA mexe em scaleX/scaleY.
               private fun pressable(v: View) {
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
-                              view.animate().alpha(0.5f).setDuration(120).start()
+                              view.animate().alpha(0.6f).setDuration(100).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                               view.animate().cancel()
@@ -1316,7 +1343,7 @@ jobs:
                   col.setOnClickListener { v ->
                       if (!editing) {
                           when (e) {
-                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder, col) }
+                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
                               is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e)
                           }
                       }
@@ -1465,7 +1492,6 @@ jobs:
                   return root
               }
 
-              // ================= DOCK =================
               private fun buildDock() {
                   dock.removeAllViews()
                   if (dockPkgs.isEmpty()) {
@@ -1478,7 +1504,6 @@ jobs:
 
                   for (pk in dockPkgs) {
                       val a = apps[pk] ?: continue
-                      
                       val frame = FrameLayout(this)
                       frame.layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
 
@@ -1488,10 +1513,7 @@ jobs:
                       }
 
                       pressable(iv)
-                      
-                      iv.setOnClickListener {
-                          launch(a, iv, iv)
-                      }
+                      iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                           appMenu(a.pkg, Where.DOCK)
@@ -1502,7 +1524,6 @@ jobs:
                       dock.addView(frame)
                   }
               }
-              // ==========================================
 
               private fun updateDots(selected: Int) {
                   val total = homePages.size + 2
@@ -1877,7 +1898,7 @@ jobs:
                   val tv = row.getChildAt(1) as TextView
                   iv.setImageDrawable(a.icon)
                   tv.text = a.label
-                  row.setOnClickListener { launch(a, row, row) }
+                  row.setOnClickListener { launch(a, row) }
                   row.setOnLongClickListener {
                       appMenu(a.pkg, where)
                       true
@@ -1912,7 +1933,7 @@ jobs:
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
                       pressable(iv)
-                      iv.setOnClickListener { launch(a, iv, iv) }
+                      iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           appMenu(a.pkg, Where.LIBRARY)
                           true
@@ -2075,7 +2096,7 @@ jobs:
                               val iv = roundIcon(a.icon, iconPx)
                               cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
                               cell.addView(labelView(a.label), LinearLayout.LayoutParams(MATCH, WRAP))
-                              cell.setOnClickListener { launch(a, iv, cell) }
+                              cell.setOnClickListener { launch(a, iv) }
                               cell.setOnLongClickListener {
                                   it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                   appMenu(a.pkg, if (folder != null) Where.FOLDER else Where.LIBRARY, folder)
