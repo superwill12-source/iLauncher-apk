@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 7
-                  versionName = "2.5"
+                  versionCode = 8
+                  versionName = "2.6"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -677,8 +677,6 @@ jobs:
               val category: String
           )
 
-          private data class CpuStat(val overall: LongArray?, val cores: List<LongArray>)
-
           private enum class Where { HOME, DOCK, FOLDER, LIBRARY, SEARCH }
 
           private class OptionList {
@@ -909,7 +907,6 @@ jobs:
               }
 
               private fun resetAllIconScales() {
-                  // Percorre todas as páginas visíveis do pager e reseta a escala dos ícones
                   val rv = pager.getChildAt(0) as? RecyclerView ?: return
                   for (i in 0 until rv.childCount) {
                       val page = rv.getChildAt(i)
@@ -1268,7 +1265,6 @@ jobs:
               }
 
               private fun pressable(v: View) {
-                  // Efeito de escala (zoom) restaurado com animação suave.
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
@@ -1653,7 +1649,6 @@ jobs:
                               val tempF = File(z, "temp")
                               if (!typeF.exists() || !tempF.exists()) continue
                               val type = typeF.readText().trim().lowercase()
-                              // Filtra apenas zonas que parecem ser de CPU ou SoC
                               if (!type.contains("cpu") && !type.contains("soc") && !type.contains("tsens")) continue
                               
                               val raw = tempF.readText().trim().toLongOrNull() ?: continue
@@ -1670,65 +1665,23 @@ jobs:
                   return null
               }
 
-              private fun readCpuUsageHpm(): Pair<Int, List<Int>>? {
+              private fun readCurrentCpuFreq(): String {
                   try {
-                      val hpm = getSystemService(Context.HARDWARE_PROPERTIES_SERVICE) as? HardwarePropertiesManager ?: return null
-                      val usages = hpm.cpuUsages
-                      if (usages != null && usages.isNotEmpty()) {
-                          var totalActive = 0L
-                          var totalTotal = 0L
-                          val percents = mutableListOf<Int>()
-                          for (u in usages) {
-                              totalActive += u.active
-                              totalTotal += u.total
-                              val pct = if (u.total > 0) (u.active * 100 / u.total).toInt() else 0
-                              percents.add(pct)
+                      var maxFreq = 0
+                      val cores = Runtime.getRuntime().availableProcessors()
+                      for (i in 0 until cores) {
+                          val f = File("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
+                          if (f.canRead()) {
+                              val khz = f.readText().trim().toLongOrNull() ?: continue
+                              if (khz > maxFreq) maxFreq = khz.toInt()
                           }
-                          val overall = if (totalTotal > 0) (totalActive * 100 / totalTotal).toInt() else 0
-                          return Pair(overall, percents)
+                      }
+                      if (maxFreq > 0) {
+                          if (maxFreq >= 1000000) return "%.2f GHz".format(maxFreq / 1000000f)
+                          return "${maxFreq / 1000} MHz"
                       }
                   } catch (_: Exception) {}
-                  return null
-              }
-
-              private fun updateCoreBars(box: LinearLayout, percents: List<Int>) {
-                  if (percents.isEmpty()) return
-                  if (box.childCount != percents.size) {
-                      box.removeAllViews()
-                      for (i in percents.indices) {
-                          val row = LinearLayout(this).apply {
-                              orientation = LinearLayout.HORIZONTAL
-                              gravity = Gravity.CENTER_VERTICAL
-                              setPadding(0, dp(2), 0, dp(2))
-                          }
-                          row.addView(tv("C$i", 11f, 0xFFBBBBBB.toInt()), LinearLayout.LayoutParams(dp(26), WRAP))
-                          val track = LinearLayout(this).apply {
-                              weightSum = 100f
-                              background = rounded(0x33FFFFFF, dp(3))
-                          }
-                          row.addView(track, LinearLayout.LayoutParams(0, dp(6), 1f).apply { rightMargin = dp(8) })
-                          row.addView(tv("—", 10f, 0xFFBBBBBB.toInt()), LinearLayout.LayoutParams(dp(36), WRAP))
-                          box.addView(row)
-                      }
-                  }
-                  for (i in percents.indices) {
-                      val row = box.getChildAt(i) as? LinearLayout ?: continue
-                      if (row.childCount < 3) continue
-                      val track = row.getChildAt(1) as LinearLayout
-                      val label = row.getChildAt(2) as TextView
-                      val pct = percents[i]
-                      track.removeAllViews()
-                      if (pct > 0) {
-                          val color = when {
-                              pct >= 80 -> 0xFFFF3B30.toInt()
-                              pct >= 50 -> 0xFFFF9F0A.toInt()
-                              else -> 0xFF34C759.toInt()
-                          }
-                          val fill = View(this).apply { background = rounded(color, dp(3)) }
-                          track.addView(fill, LinearLayout.LayoutParams(0, MATCH, pct.toFloat()))
-                      }
-                      label.text = "$pct%"
-                  }
+                  return "—"
               }
 
               private fun buildCpuCard(): View {
@@ -1739,19 +1692,16 @@ jobs:
                   }
                   card.addView(tv("CPU e Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
                   
-                  val overallView = tv("—", 40f, Color.WHITE).apply {
+                  val freqView = tv("—", 40f, Color.WHITE).apply {
                       typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                   }
-                  card.addView(overallView)
+                  card.addView(freqView)
                   
-                  val tempView = tv("Temp: —", 12f, 0xFFBBBBBB.toInt())
+                  val tempView = tv("CPU: —", 12f, 0xFFBBBBBB.toInt())
                   card.addView(tempView)
                   
                   val batTempView = tv("Bateria: —", 11f, 0xFFBBBBBB.toInt())
                   card.addView(batTempView, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(2) })
-
-                  val coresBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-                  card.addView(coresBox, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(10) })
 
                   card.setOnClickListener {
                       tryStart(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
@@ -1767,14 +1717,8 @@ jobs:
                               return
                           }
                           try {
-                              // CPU Usage
-                              val hpmUsage = readCpuUsageHpm()
-                              if (hpmUsage != null) {
-                                  overallView.text = "${hpmUsage.first}%"
-                                  updateCoreBars(coresBox, hpmUsage.second)
-                              } else {
-                                  overallView.text = "—"
-                              }
+                              // Frequência
+                              freqView.text = readCurrentCpuFreq()
                               
                               // CPU Temp (HPM -> Sysfs fallback)
                               var cpuTemp = readCpuTempHpm()
@@ -1788,7 +1732,7 @@ jobs:
                                   tempView.setTextColor(0xFFBBBBBB.toInt())
                               }
                               
-                              // Battery Temp
+                              // Bateria Temp
                               val batTemp = readBatteryTemp()
                               if (batTemp != null) {
                                   batTempView.text = "Bateria: %.1f°C".format(batTemp)
