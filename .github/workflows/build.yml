@@ -62,8 +62,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 4
-                  versionName = "2.2"
+                  versionCode = 5
+                  versionName = "2.3"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -250,10 +250,15 @@ jobs:
               fun kindOf(label: String, pkg: String): String {
                   val p = pkg.lowercase()
                   val l = label.lowercase()
+                  
+                  // Verificação segura para SMS/Mensagens, sem confundir com "chat" ou "text"
+                  val smsPkgs = listOf("messaging", ".mms", ".sms", "textra", "com.android.messaging")
+                  val isSms = smsPkgs.any { p.contains(it) } || 
+                              l == "mensagens" || l == "messages" || l == "sms" || l == "mensagem"
+                  
                   return when {
                       p.contains("dialer") || p.endsWith(".phone") || l == "telefone" || l == "phone" -> "phone"
-                      p.contains("messag") || p.contains("sms") || p.contains("mms") || p.contains("text") || p.contains("chat") ||
-                          l.contains("mensag") || l.contains("message") || l.contains("sms") || l.contains("chat") -> "messages"
+                      isSms -> "messages"
                       p.contains("camera") || l == "câmera" || l == "camera" -> "camera"
                       p == "com.android.settings" || l == "configurações" || l == "settings" || l == "ajustes" -> "settings"
                       p.contains("clock") || l == "relógio" || l == "clock" -> "clock"
@@ -399,8 +404,6 @@ jobs:
                           it.draw(c)
                       }
                   } else {
-                      // Fix: desenha o ícone original um pouco maior (16..240) 
-                      // para não parecer "encolhido" dentro do squircle branco.
                       b.setBounds(16, 16, 240, 240)
                       b.draw(c)
                   }
@@ -620,6 +623,7 @@ jobs:
           import android.app.ActivityOptions
           import android.app.AlertDialog
           import android.content.ClipData
+          import android.content.Context
           import android.content.Intent
           import android.content.IntentFilter
           import android.content.pm.ApplicationInfo
@@ -633,6 +637,7 @@ jobs:
           import android.os.Bundle
           import android.os.Environment
           import android.os.Handler
+          import android.os.HardwarePropertiesManager
           import android.os.Looper
           import android.os.StatFs
           import android.provider.AlarmClock
@@ -667,7 +672,9 @@ jobs:
           import androidx.core.widget.doAfterTextChanged
           import androidx.recyclerview.widget.RecyclerView
           import androidx.viewpager2.widget.ViewPager2
+          import java.io.BufferedReader
           import java.io.File
+          import java.io.InputStreamReader
           import java.util.Date
           import java.util.Locale
 
@@ -1599,28 +1606,41 @@ jobs:
               private fun readCpuStat(): CpuStat {
                   var overall: LongArray? = null
                   val cores = mutableListOf<LongArray>()
+                  
+                  // Tentativa 1: Leitura via Runtime.exec (funciona em alguns Androids 10+ onde File.readText falha)
                   try {
-                      val f = File("/proc/stat")
-                      if (f.canRead()) {
-                          f.bufferedReader().use { br ->
-                              while (true) {
-                                  val line = br.readLine() ?: break
-                                  if (!line.startsWith("cpu")) break
-                                  val parts = line.trim().split(Regex("\\s+"))
-                                  if (parts.size < 8) continue
-                                  val v = LongArray(8)
-                                  for (i in 0 until 8) {
-                                      v[i] = parts[i + 1].toLongOrNull() ?: 0L
-                                  }
-                                  if (parts[0] == "cpu") {
-                                      overall = v
-                                  } else {
-                                      cores.add(v)
+                      val process = Runtime.getRuntime().exec("cat /proc/stat")
+                      val br = BufferedReader(InputStreamReader(process.inputStream))
+                      while (true) {
+                          val line = br.readLine() ?: break
+                          if (!line.startsWith("cpu")) break
+                          val parts = line.trim().split(Regex("\\s+"))
+                          if (parts.size < 8) continue
+                          val v = LongArray(8)
+                          for (i in 0 until 8) v[i] = parts[i + 1].toLongOrNull() ?: 0L
+                          if (parts[0] == "cpu") overall = v else cores.add(v)
+                      }
+                      br.close()
+                  } catch (_: Exception) {}
+
+                  // Tentativa 2: Leitura direta via File (fallback)
+                  if (overall == null) {
+                      try {
+                          val f = File("/proc/stat")
+                          if (f.canRead()) {
+                              f.bufferedReader().use { br ->
+                                  while (true) {
+                                      val line = br.readLine() ?: break
+                                      if (!line.startsWith("cpu")) break
+                                      val parts = line.trim().split(Regex("\\s+"))
+                                      if (parts.size < 8) continue
+                                      val v = LongArray(8)
+                                      for (i in 0 until 8) v[i] = parts[i + 1].toLongOrNull() ?: 0L
+                                      if (parts[0] == "cpu") overall = v else cores.add(v)
                                   }
                               }
                           }
-                      }
-                  } catch (_: Exception) {
+                      } catch (_: Exception) {}
                   }
                   return CpuStat(overall, cores)
               }
@@ -1632,8 +1652,34 @@ jobs:
                   return ((dTotal - dIdle) * 100 / dTotal).toInt().coerceIn(0, 100)
               }
 
+              private fun readCpuFreqMhz(): String {
+                  try {
+                      val f = File("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+                      if (f.canRead()) {
+                          val khz = f.readText().trim().toLongOrNull() ?: return ""
+                          return "${khz / 1000} MHz"
+                      }
+                  } catch (_: Exception) {}
+                  return ""
+              }
+
               private fun readCpuTemps(): List<Pair<String, Float>> {
                   val out = mutableListOf<Pair<String, Float>>()
+                  
+                  // Tentativa 1: API oficial do Android para temperatura da CPU (funciona na maioria dos aparelhos sem root)
+                  try {
+                      val hpm = getSystemService(Context.HARDWARE_PROPERTIES_SERVICE) as? HardwarePropertiesManager
+                      if (hpm != null) {
+                          val temps = hpm.getDeviceTemperatures(HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU, HardwarePropertiesManager.TEMPERATURE_CURRENT)
+                          for ((i, t) in temps.withIndex()) {
+                              if (t > 0f && t < 105f) out.add("CPU$i" to t)
+                          }
+                      }
+                  } catch (_: Exception) {}
+
+                  if (out.isNotEmpty()) return out
+
+                  // Tentativa 2: Leitura sysfs
                   try {
                       val dir = File("/sys/class/thermal")
                       val zones = dir.listFiles() ?: return out
@@ -1646,18 +1692,11 @@ jobs:
                               val type = typeF.readText().trim()
                               val raw = tempF.readText().trim().toLongOrNull() ?: continue
                               var celsius = if (raw > 1000) raw / 1000f else raw.toFloat()
-                              // Se estiver entre 105 e 212, provavelmente é Fahrenheit
-                              if (celsius > 105f && celsius < 212f) {
-                                  celsius = (celsius - 32f) * 5f / 9f
-                              }
-                              if (celsius in 10f..105f) {
-                                  out.add(type to celsius)
-                              }
-                          } catch (_: Exception) {
-                          }
+                              if (celsius > 105f && celsius < 212f) celsius = (celsius - 32f) * 5f / 9f
+                              if (celsius in 10f..105f) out.add(type to celsius)
+                          } catch (_: Exception) {}
                       }
-                  } catch (_: Exception) {
-                  }
+                  } catch (_: Exception) {}
                   return out
               }
 
@@ -1739,18 +1778,17 @@ jobs:
                           try {
                               val now = readCpuStat()
                               if (now.overall == null) {
-                                  overallView.text = "Restrito"
-                                  tempView.text = "Temp: —"
-                                  updateCoreBars(coresBox, null, emptyList())
-                                  handler.postDelayed(this, 5000)
-                                  return
-                              }
-                              if (prev != null && prev!!.overall != null) {
-                                  val pct = computeCpuPct(prev!!.overall!!, now.overall!!)
-                                  overallView.text = "$pct%"
-                                  updateCoreBars(coresBox, prev!!.cores, now.cores)
+                                  // Fallback: o Android restringiu a leitura. Mostra a frequência.
+                                  val freq = readCpuFreqMhz()
+                                  overallView.text = if (freq.isNotEmpty()) freq else "Oculto"
                               } else {
-                                  updateCoreBars(coresBox, null, now.cores)
+                                  if (prev != null && prev!!.overall != null) {
+                                      val pct = computeCpuPct(prev!!.overall!!, now.overall!!)
+                                      overallView.text = "$pct%"
+                                      updateCoreBars(coresBox, prev!!.cores, now.cores)
+                                  } else {
+                                      updateCoreBars(coresBox, null, now.cores)
+                                  }
                               }
                               val temps = readCpuTemps()
                               if (temps.isNotEmpty()) {
