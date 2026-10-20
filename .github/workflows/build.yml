@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 12
-                  versionName = "3.0"
+                  versionCode = 14
+                  versionName = "3.2"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -382,84 +382,110 @@ jobs:
                   return out
               }
 
-              private fun drawBaseContent(c: Canvas, b: Drawable) {
+              // ========== WRAP COM BOUNDING BOX (CENTRALIZA E AMPLIA) ==========
+              private fun wrap(c: Canvas) {
+                  gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
+                  val b = base
+                  val tmpSize = 128
+                  val s = tmpSize / 256f
+
                   if (b is AdaptiveIconDrawable) {
+                      // Desenha o background preenchendo 100% do squircle
                       b.background?.let {
                           it.setBounds(0, 0, 256, 256)
                           it.draw(c)
                       }
-                      b.foreground?.let {
-                          it.setBounds(0, 0, 256, 256)
-                          it.draw(c)
-                      }
-                  } else {
-                      b.setBounds(0, 0, 256, 256)
-                      b.draw(c)
-                  }
-              }
 
-              // ========== WRAP COM ZOOM DINÂMICO (FIM DO ÍCONE PEQUENO) ==========
-              private fun wrap(c: Canvas) {
-                  gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
-                  val b = base
+                      // Analisa o foreground para encontrar a bounding box
+                      val fg = b.foreground
+                      if (fg != null) {
+                          val tmp = Bitmap.createBitmap(tmpSize, tmpSize, Bitmap.Config.ARGB_8888)
+                          val tc = Canvas(tmp)
+                          tc.scale(s, s)
+                          fg.setBounds(0, 0, 256, 256)
+                          fg.draw(tc)
 
-                  // Determina qual drawable usar para a bounding box (o foreground
-                  // é onde fica o desenho real do ícone adaptativo; o background é só cor).
-                  val contentDrawable: Drawable = if (b is AdaptiveIconDrawable) {
-                      b.foreground ?: b
-                  } else {
-                      b
-                  }
+                          var minX = tmpSize; var minY = tmpSize; var maxX = -1; var maxY = -1
+                          val pixels = IntArray(tmpSize * tmpSize)
+                          tmp.getPixels(pixels, 0, tmpSize, 0, 0, tmpSize, tmpSize)
+                          for (y in 0 until tmpSize) {
+                              for (x in 0 until tmpSize) {
+                                  if (((pixels[y * tmpSize + x] ushr 24) and 0xFF) > 10) {
+                                      if (x < minX) minX = x
+                                      if (x > maxX) maxX = x
+                                      if (y < minY) minY = y
+                                      if (y > maxY) maxY = y
+                                  }
+                              }
+                          }
+                          tmp.recycle()
 
-                  // 1. Desenha o conteúdo em um bitmap pequeno (64x64) para encontrar a
-                  //    bounding box do desenho. 64x64 é rápido e suficiente.
-                  val tmpSize = 64
-                  val tmp = Bitmap.createBitmap(tmpSize, tmpSize, Bitmap.Config.ARGB_8888)
-                  val tc = Canvas(tmp)
-                  val s = tmpSize / 256f
-                  tc.scale(s, s)
-                  contentDrawable.setBounds(0, 0, 256, 256)
-                  contentDrawable.draw(tc)
+                          if (maxX >= 0) {
+                              val boxW = (maxX - minX + 1) / s
+                              val boxH = (maxY - minY + 1) / s
+                              val boxCx = (minX + maxX + 1) / 2f / s
+                              val boxCy = (minY + maxY + 1) / 2f / s
+                              val targetSize = 256 * 0.9f // Preenche 90% do quadrado
+                              val scale = Math.min(targetSize / boxW, targetSize / boxH)
 
-                  var minX = tmpSize
-                  var minY = tmpSize
-                  var maxX = -1
-                  var maxY = -1
-                  val pixels = IntArray(tmpSize * tmpSize)
-                  tmp.getPixels(pixels, 0, tmpSize, 0, 0, tmpSize, tmpSize)
-                  for (y in 0 until tmpSize) {
-                      for (x in 0 until tmpSize) {
-                          val alpha = (pixels[y * tmpSize + x] ushr 24) and 0xFF
-                          if (alpha > 10) { // ignora anti-aliasing
-                              if (x < minX) minX = x
-                              if (x > maxX) maxX = x
-                              if (y < minY) minY = y
-                              if (y > maxY) maxY = y
+                              c.save()
+                              c.translate(128f, 128f)
+                              c.scale(scale, scale)
+                              c.translate(-boxCx, -boxCy)
+                              fg.setBounds(0, 0, 256, 256)
+                              fg.draw(c)
+                              c.restore()
                           }
                       }
-                  }
-                  tmp.recycle()
-
-                  // 2. Aplica zoom e translação para que a bounding box preencha 90% do
-                  //    squircle (deixa uma pequena margem, igual ao iOS).
-                  if (maxX >= 0) {
-                      val boxW = (maxX - minX + 1) / s
-                      val boxH = (maxY - minY + 1) / s
-                      val boxCx = (minX + maxX + 1) / 2f / s
-                      val boxCy = (minY + maxY + 1) / 2f / s
-
-                      val targetSize = 256 * 0.90f
-                      val scale = Math.min(targetSize / boxW, targetSize / boxH)
-
-                      c.save()
-                      c.translate(128f, 128f)
-                      c.scale(scale, scale)
-                      c.translate(-boxCx, -boxCy)
-                      drawBaseContent(c, b)
-                      c.restore()
                   } else {
-                      // Fallback: não conseguimos medir, desenha sem zoom
-                      drawBaseContent(c, b)
+                      // Ícone legado
+                      val tmp = Bitmap.createBitmap(tmpSize, tmpSize, Bitmap.Config.ARGB_8888)
+                      val tc = Canvas(tmp)
+                      tc.scale(s, s)
+                      b.setBounds(0, 0, 256, 256)
+                      b.draw(tc)
+
+                      var minX = tmpSize; var minY = tmpSize; var maxX = -1; var maxY = -1
+                      val pixels = IntArray(tmpSize * tmpSize)
+                      tmp.getPixels(pixels, 0, tmpSize, 0, 0, tmpSize, tmpSize)
+                      for (y in 0 until tmpSize) {
+                          for (x in 0 until tmpSize) {
+                              if (((pixels[y * tmpSize + x] ushr 24) and 0xFF) > 10) {
+                                  if (x < minX) minX = x
+                                  if (x > maxX) maxX = x
+                                  if (y < minY) minY = y
+                                  if (y > maxY) maxY = y
+                              }
+                          }
+                      }
+                      tmp.recycle()
+
+                      if (maxX >= 0) {
+                          val boxW = (maxX - minX + 1) / s
+                          val boxH = (maxY - minY + 1) / s
+                          val boxCx = (minX + maxX + 1) / 2f / s
+                          val boxCy = (minY + maxY + 1) / 2f / s
+
+                          if (boxW > 256 * 0.9f && boxH > 256 * 0.9f) {
+                              // Já preenche tudo, desenha sem zoom
+                              b.setBounds(0, 0, 256, 256)
+                              b.draw(c)
+                          } else {
+                              // Está descentralizado/pequeno, aplica zoom
+                              val targetSize = 256 * 0.85f
+                              val scale = Math.min(targetSize / boxW, targetSize / boxH)
+                              c.save()
+                              c.translate(128f, 128f)
+                              c.scale(scale, scale)
+                              c.translate(-boxCx, -boxCy)
+                              b.setBounds(0, 0, 256, 256)
+                              b.draw(c)
+                              c.restore()
+                          }
+                      } else {
+                          b.setBounds(0, 0, 256, 256)
+                          b.draw(c)
+                      }
                   }
               }
               // ===================================================================
@@ -820,7 +846,7 @@ jobs:
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
-                  // Nenhum PageTransformer: todas as páginas têm scale 1.0 sempre.
+                  // NOTA: Nenhum PageTransformer para evitar qualquer alteração de escala.
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -1154,7 +1180,6 @@ jobs:
                   }
               }
 
-              // Launch direto, sem overlay, sem animação de escala.
               private fun launch(a: AppItem, anchor: View? = null) {
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
