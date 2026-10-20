@@ -1,5 +1,4 @@
 # iLauncher - cria o projeto Android inteiro e compila o APK sozinho.
-# Basta colocar ESTE arquivo em .github/workflows/build.yml no seu repositorio.
 name: Build iLauncher APK
 
 on:
@@ -62,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 5
-                  versionName = "2.3"
+                  versionCode = 7
+                  versionName = "2.5"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -251,7 +250,6 @@ jobs:
                   val p = pkg.lowercase()
                   val l = label.lowercase()
                   
-                  // Verificação segura para SMS/Mensagens, sem confundir com "chat" ou "text"
                   val smsPkgs = listOf("messaging", ".mms", ".sms", "textra", "com.android.messaging")
                   val isSms = smsPkgs.any { p.contains(it) } || 
                               l == "mensagens" || l == "messages" || l == "sms" || l == "mensagem"
@@ -276,7 +274,6 @@ jobs:
                   }
               }
 
-              // Forma "squircle" (superelipse) usada pelo iOS
               fun squircle(size: Float): Path {
                   val path = Path()
                   val n = 5.0
@@ -337,8 +334,6 @@ jobs:
               @Deprecated("Deprecated in Java")
               override fun getOpacity() = PixelFormat.TRANSLUCENT
 
-              // ---------- util ----------
-
               private fun k(v: Long): Int = v.toInt()
 
               private fun pt(color: Int, stroke: Float = 0f): Paint {
@@ -387,8 +382,6 @@ jobs:
                   return out
               }
 
-              // ---------- ícone padrão: ícone do app dentro do squircle ----------
-
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
@@ -408,8 +401,6 @@ jobs:
                       b.draw(c)
                   }
               }
-
-              // ---------- ícones estilo iOS ----------
 
               private fun phone(c: Canvas) {
                   gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
@@ -873,10 +864,15 @@ jobs:
                   super.onResume()
                   dismissLaunch(true)
                   refresh()
+                  // Reset de segurança: se o app for aberto no meio da animação de toque,
+                  // a view original pode ficar com a escala reduzida. Aqui garantimos que
+                  // todos os ícones voltem ao tamanho normal (1f).
+                  resetAllIconScales()
                   resetDockIcons()
                   if (loaded) {
                       pager.postDelayed({
                           pager.adapter?.notifyDataSetChanged()
+                          resetAllIconScales()
                           resetDockIcons()
                       }, 300)
                   }
@@ -910,6 +906,26 @@ jobs:
                   v.scaleX = 1f
                   v.scaleY = 1f
                   v.alpha = 1f
+              }
+
+              private fun resetAllIconScales() {
+                  // Percorre todas as páginas visíveis do pager e reseta a escala dos ícones
+                  val rv = pager.getChildAt(0) as? RecyclerView ?: return
+                  for (i in 0 until rv.childCount) {
+                      val page = rv.getChildAt(i)
+                      resetViewHierarchy(page)
+                  }
+                  resetDockIcons()
+              }
+
+              private fun resetViewHierarchy(v: View) {
+                  if (v is ViewGroup) {
+                      for (i in 0 until v.childCount) {
+                          resetViewHierarchy(v.getChildAt(i))
+                      }
+                  }
+                  v.scaleX = 1f
+                  v.scaleY = 1f
               }
 
               private fun resetDockIcons() {
@@ -1252,11 +1268,12 @@ jobs:
               }
 
               private fun pressable(v: View) {
+                  // Efeito de escala (zoom) restaurado com animação suave.
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
-                              view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90)
+                              view.animate().scaleX(0.88f).scaleY(0.88f).setDuration(90)
                                   .setInterpolator(DecelerateInterpolator()).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -1601,110 +1618,84 @@ jobs:
                   }
               }
 
-              // ---------- CPU: leitura de /proc/stat e /sys/class/thermal ----------
+              // ---------- CPU e Temperatura via APIs Oficiais ----------
 
-              private fun readCpuStat(): CpuStat {
-                  var overall: LongArray? = null
-                  val cores = mutableListOf<LongArray>()
-                  
-                  // Tentativa 1: Leitura via Runtime.exec (funciona em alguns Androids 10+ onde File.readText falha)
+              private fun readBatteryTemp(): Float? {
                   try {
-                      val process = Runtime.getRuntime().exec("cat /proc/stat")
-                      val br = BufferedReader(InputStreamReader(process.inputStream))
-                      while (true) {
-                          val line = br.readLine() ?: break
-                          if (!line.startsWith("cpu")) break
-                          val parts = line.trim().split(Regex("\\s+"))
-                          if (parts.size < 8) continue
-                          val v = LongArray(8)
-                          for (i in 0 until 8) v[i] = parts[i + 1].toLongOrNull() ?: 0L
-                          if (parts[0] == "cpu") overall = v else cores.add(v)
-                      }
-                      br.close()
+                      val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                      val temp = intent?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1) ?: -1
+                      if (temp > 0) return temp / 10f
                   } catch (_: Exception) {}
-
-                  // Tentativa 2: Leitura direta via File (fallback)
-                  if (overall == null) {
-                      try {
-                          val f = File("/proc/stat")
-                          if (f.canRead()) {
-                              f.bufferedReader().use { br ->
-                                  while (true) {
-                                      val line = br.readLine() ?: break
-                                      if (!line.startsWith("cpu")) break
-                                      val parts = line.trim().split(Regex("\\s+"))
-                                      if (parts.size < 8) continue
-                                      val v = LongArray(8)
-                                      for (i in 0 until 8) v[i] = parts[i + 1].toLongOrNull() ?: 0L
-                                      if (parts[0] == "cpu") overall = v else cores.add(v)
-                                  }
-                              }
-                          }
-                      } catch (_: Exception) {}
-                  }
-                  return CpuStat(overall, cores)
+                  return null
               }
 
-              private fun computeCpuPct(prev: LongArray, curr: LongArray): Int {
-                  val dTotal = curr.sum() - prev.sum()
-                  val dIdle = (curr[3] + curr[4]) - (prev[3] + prev[4])
-                  if (dTotal <= 0) return 0
-                  return ((dTotal - dIdle) * 100 / dTotal).toInt().coerceIn(0, 100)
-              }
-
-              private fun readCpuFreqMhz(): String {
+              private fun readCpuTempHpm(): Float? {
                   try {
-                      val f = File("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
-                      if (f.canRead()) {
-                          val khz = f.readText().trim().toLongOrNull() ?: return ""
-                          return "${khz / 1000} MHz"
+                      val hpm = getSystemService(Context.HARDWARE_PROPERTIES_SERVICE) as? HardwarePropertiesManager ?: return null
+                      val temps = hpm.getDeviceTemperatures(HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU, HardwarePropertiesManager.TEMPERATURE_CURRENT)
+                      if (temps != null && temps.isNotEmpty()) {
+                          val valid = temps.filter { it in 10f..105f }
+                          if (valid.isNotEmpty()) return valid.maxOrNull()
                       }
                   } catch (_: Exception) {}
-                  return ""
+                  return null
               }
 
-              private fun readCpuTemps(): List<Pair<String, Float>> {
-                  val out = mutableListOf<Pair<String, Float>>()
-                  
-                  // Tentativa 1: API oficial do Android para temperatura da CPU (funciona na maioria dos aparelhos sem root)
-                  try {
-                      val hpm = getSystemService(Context.HARDWARE_PROPERTIES_SERVICE) as? HardwarePropertiesManager
-                      if (hpm != null) {
-                          val temps = hpm.getDeviceTemperatures(HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU, HardwarePropertiesManager.TEMPERATURE_CURRENT)
-                          for ((i, t) in temps.withIndex()) {
-                              if (t > 0f && t < 105f) out.add("CPU$i" to t)
-                          }
-                      }
-                  } catch (_: Exception) {}
-
-                  if (out.isNotEmpty()) return out
-
-                  // Tentativa 2: Leitura sysfs
+              private fun readCpuTempSysfs(): Float? {
                   try {
                       val dir = File("/sys/class/thermal")
-                      val zones = dir.listFiles() ?: return out
+                      val zones = dir.listFiles() ?: return null
+                      var maxTemp = -1f
                       for (z in zones) {
                           if (!z.name.startsWith("thermal_zone")) continue
                           try {
                               val typeF = File(z, "type")
                               val tempF = File(z, "temp")
                               if (!typeF.exists() || !tempF.exists()) continue
-                              val type = typeF.readText().trim()
+                              val type = typeF.readText().trim().lowercase()
+                              // Filtra apenas zonas que parecem ser de CPU ou SoC
+                              if (!type.contains("cpu") && !type.contains("soc") && !type.contains("tsens")) continue
+                              
                               val raw = tempF.readText().trim().toLongOrNull() ?: continue
                               var celsius = if (raw > 1000) raw / 1000f else raw.toFloat()
                               if (celsius > 105f && celsius < 212f) celsius = (celsius - 32f) * 5f / 9f
-                              if (celsius in 10f..105f) out.add(type to celsius)
+                              
+                              if (celsius in 10f..105f) {
+                                  if (celsius > maxTemp) maxTemp = celsius
+                              }
                           } catch (_: Exception) {}
                       }
+                      if (maxTemp > 0) return maxTemp
                   } catch (_: Exception) {}
-                  return out
+                  return null
               }
 
-              private fun updateCoreBars(box: LinearLayout, prev: List<LongArray>?, curr: List<LongArray>) {
-                  if (curr.isEmpty()) return
-                  if (box.childCount != curr.size) {
+              private fun readCpuUsageHpm(): Pair<Int, List<Int>>? {
+                  try {
+                      val hpm = getSystemService(Context.HARDWARE_PROPERTIES_SERVICE) as? HardwarePropertiesManager ?: return null
+                      val usages = hpm.cpuUsages
+                      if (usages != null && usages.isNotEmpty()) {
+                          var totalActive = 0L
+                          var totalTotal = 0L
+                          val percents = mutableListOf<Int>()
+                          for (u in usages) {
+                              totalActive += u.active
+                              totalTotal += u.total
+                              val pct = if (u.total > 0) (u.active * 100 / u.total).toInt() else 0
+                              percents.add(pct)
+                          }
+                          val overall = if (totalTotal > 0) (totalActive * 100 / totalTotal).toInt() else 0
+                          return Pair(overall, percents)
+                      }
+                  } catch (_: Exception) {}
+                  return null
+              }
+
+              private fun updateCoreBars(box: LinearLayout, percents: List<Int>) {
+                  if (percents.isEmpty()) return
+                  if (box.childCount != percents.size) {
                       box.removeAllViews()
-                      for (i in curr.indices) {
+                      for (i in percents.indices) {
                           val row = LinearLayout(this).apply {
                               orientation = LinearLayout.HORIZONTAL
                               gravity = Gravity.CENTER_VERTICAL
@@ -1720,27 +1711,23 @@ jobs:
                           box.addView(row)
                       }
                   }
-                  for (i in curr.indices) {
+                  for (i in percents.indices) {
                       val row = box.getChildAt(i) as? LinearLayout ?: continue
                       if (row.childCount < 3) continue
                       val track = row.getChildAt(1) as LinearLayout
                       val label = row.getChildAt(2) as TextView
-                      val pct = if (prev != null && i < prev.size) computeCpuPct(prev[i], curr[i]) else -1
+                      val pct = percents[i]
                       track.removeAllViews()
-                      if (pct >= 0) {
-                          if (pct > 0) {
-                              val color = when {
-                                  pct >= 80 -> 0xFFFF3B30.toInt()
-                                  pct >= 50 -> 0xFFFF9F0A.toInt()
-                                  else -> 0xFF34C759.toInt()
-                              }
-                              val fill = View(this).apply { background = rounded(color, dp(3)) }
-                              track.addView(fill, LinearLayout.LayoutParams(0, MATCH, pct.toFloat()))
+                      if (pct > 0) {
+                          val color = when {
+                              pct >= 80 -> 0xFFFF3B30.toInt()
+                              pct >= 50 -> 0xFFFF9F0A.toInt()
+                              else -> 0xFF34C759.toInt()
                           }
-                          label.text = "$pct%"
-                      } else {
-                          label.text = "—"
+                          val fill = View(this).apply { background = rounded(color, dp(3)) }
+                          track.addView(fill, LinearLayout.LayoutParams(0, MATCH, pct.toFloat()))
                       }
+                      label.text = "$pct%"
                   }
               }
 
@@ -1750,13 +1737,19 @@ jobs:
                       background = rounded(0x99000000.toInt(), dp(22))
                       setPadding(dp(16), dp(14), dp(16), dp(14))
                   }
-                  card.addView(tv("CPU", 13f, 0xFFBBBBBB.toInt(), true))
+                  card.addView(tv("CPU e Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
+                  
                   val overallView = tv("—", 40f, Color.WHITE).apply {
                       typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                   }
                   card.addView(overallView)
+                  
                   val tempView = tv("Temp: —", 12f, 0xFFBBBBBB.toInt())
                   card.addView(tempView)
+                  
+                  val batTempView = tv("Bateria: —", 11f, 0xFFBBBBBB.toInt())
+                  card.addView(batTempView, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(2) })
+
                   val coresBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
                   card.addView(coresBox, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(10) })
 
@@ -1765,8 +1758,6 @@ jobs:
                   }
 
                   val handler = Handler(Looper.getMainLooper())
-                  var prev: CpuStat? = null
-                  var iterations = 0
                   var running = false
                   val task = object : Runnable {
                       override fun run() {
@@ -1776,39 +1767,43 @@ jobs:
                               return
                           }
                           try {
-                              val now = readCpuStat()
-                              if (now.overall == null) {
-                                  // Fallback: o Android restringiu a leitura. Mostra a frequência.
-                                  val freq = readCpuFreqMhz()
-                                  overallView.text = if (freq.isNotEmpty()) freq else "Oculto"
+                              // CPU Usage
+                              val hpmUsage = readCpuUsageHpm()
+                              if (hpmUsage != null) {
+                                  overallView.text = "${hpmUsage.first}%"
+                                  updateCoreBars(coresBox, hpmUsage.second)
                               } else {
-                                  if (prev != null && prev!!.overall != null) {
-                                      val pct = computeCpuPct(prev!!.overall!!, now.overall!!)
-                                      overallView.text = "$pct%"
-                                      updateCoreBars(coresBox, prev!!.cores, now.cores)
-                                  } else {
-                                      updateCoreBars(coresBox, null, now.cores)
-                                  }
+                                  overallView.text = "—"
                               }
-                              val temps = readCpuTemps()
-                              if (temps.isNotEmpty()) {
-                                  val max = temps.maxByOrNull { it.second }!!
-                                  tempView.text = "Temp: %.1f°C".format(max.second)
+                              
+                              // CPU Temp (HPM -> Sysfs fallback)
+                              var cpuTemp = readCpuTempHpm()
+                              if (cpuTemp == null) cpuTemp = readCpuTempSysfs()
+                              
+                              if (cpuTemp != null) {
+                                  tempView.text = "CPU: %.1f°C".format(cpuTemp)
+                                  tempView.setTextColor(if (cpuTemp > 80f) 0xFFFF3B30.toInt() else 0xFFBBBBBB.toInt())
                               } else {
-                                  tempView.text = "Temp: —"
+                                  tempView.text = "CPU: —"
+                                  tempView.setTextColor(0xFFBBBBBB.toInt())
                               }
-                              prev = now
+                              
+                              // Battery Temp
+                              val batTemp = readBatteryTemp()
+                              if (batTemp != null) {
+                                  batTempView.text = "Bateria: %.1f°C".format(batTemp)
+                              } else {
+                                  batTempView.text = "Bateria: —"
+                              }
+                              
                           } catch (_: Exception) {
                           }
-                          iterations++
-                          handler.postDelayed(this, if (iterations == 1) 500L else 2000L)
+                          handler.postDelayed(this, 2000L)
                       }
                   }
                   card.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
                       override fun onViewAttachedToWindow(v: View) {
                           running = true
-                          prev = null
-                          iterations = 0
                           handler.post(task)
                       }
 
@@ -1833,7 +1828,6 @@ jobs:
                   }
                   sv.addView(col, FrameLayout.LayoutParams(MATCH, WRAP))
 
-                  // Relógio — toque abre o app de alarme
                   val clockView = TextClock(this).apply {
                       format24Hour = "HH:mm"
                       format12Hour = "h:mm"
@@ -1850,7 +1844,6 @@ jobs:
                   }
                   col.addView(clockView, LinearLayout.LayoutParams(MATCH, WRAP))
 
-                  // Data por extenso
                   val dateView = TextClock(this).apply {
                       format24Hour = "EEEE, d 'de' MMMM"
                       format12Hour = "EEEE, d 'de' MMMM"
@@ -1868,7 +1861,6 @@ jobs:
 
                   val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
-                  // Calendário — toque abre o app de calendário
                   val now = Date()
                   val cal = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
@@ -1895,7 +1887,6 @@ jobs:
                   }
                   row.addView(cal, LinearLayout.LayoutParams(side, side))
 
-                  // Bateria — toque abre o uso de bateria nas Configurações
                   val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
                   val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
                   val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
@@ -1925,7 +1916,6 @@ jobs:
                   row.addView(bat, LinearLayout.LayoutParams(side, side).apply { leftMargin = gap })
                   col.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(16) })
 
-                  // Armazenamento — toque abre Configurações > Armazenamento
                   var used = 0.0
                   var total = 1.0
                   try {
@@ -1955,7 +1945,6 @@ jobs:
                   }
                   col.addView(sto, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
 
-                  // CPU — uso total + por núcleo + temperatura
                   col.addView(buildCpuCard(), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
 
                   return sv
