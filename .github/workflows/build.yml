@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 14
-                  versionName = "3.2"
+                  versionCode = 15
+                  versionName = "3.3"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -382,113 +382,36 @@ jobs:
                   return out
               }
 
-              // ========== WRAP COM BOUNDING BOX (CENTRALIZA E AMPLIA) ==========
+              // ========== ZOOM FIXO E CENTRALIZADO ==========
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
-                  val tmpSize = 128
-                  val s = tmpSize / 256f
 
                   if (b is AdaptiveIconDrawable) {
-                      // Desenha o background preenchendo 100% do squircle
+                      // O Android define a área útil do ícone como 72dp num canvas de 108dp.
+                      // Para preencher o quadrado inteiro, aplicamos um zoom de 108/72 = 1.5x.
+                      c.save()
+                      c.scale(1.5f, 1.5f, 128f, 128f)
                       b.background?.let {
                           it.setBounds(0, 0, 256, 256)
                           it.draw(c)
                       }
-
-                      // Analisa o foreground para encontrar a bounding box
-                      val fg = b.foreground
-                      if (fg != null) {
-                          val tmp = Bitmap.createBitmap(tmpSize, tmpSize, Bitmap.Config.ARGB_8888)
-                          val tc = Canvas(tmp)
-                          tc.scale(s, s)
-                          fg.setBounds(0, 0, 256, 256)
-                          fg.draw(tc)
-
-                          var minX = tmpSize; var minY = tmpSize; var maxX = -1; var maxY = -1
-                          val pixels = IntArray(tmpSize * tmpSize)
-                          tmp.getPixels(pixels, 0, tmpSize, 0, 0, tmpSize, tmpSize)
-                          for (y in 0 until tmpSize) {
-                              for (x in 0 until tmpSize) {
-                                  if (((pixels[y * tmpSize + x] ushr 24) and 0xFF) > 10) {
-                                      if (x < minX) minX = x
-                                      if (x > maxX) maxX = x
-                                      if (y < minY) minY = y
-                                      if (y > maxY) maxY = y
-                                  }
-                              }
-                          }
-                          tmp.recycle()
-
-                          if (maxX >= 0) {
-                              val boxW = (maxX - minX + 1) / s
-                              val boxH = (maxY - minY + 1) / s
-                              val boxCx = (minX + maxX + 1) / 2f / s
-                              val boxCy = (minY + maxY + 1) / 2f / s
-                              val targetSize = 256 * 0.9f // Preenche 90% do quadrado
-                              val scale = Math.min(targetSize / boxW, targetSize / boxH)
-
-                              c.save()
-                              c.translate(128f, 128f)
-                              c.scale(scale, scale)
-                              c.translate(-boxCx, -boxCy)
-                              fg.setBounds(0, 0, 256, 256)
-                              fg.draw(c)
-                              c.restore()
-                          }
+                      b.foreground?.let {
+                          it.setBounds(0, 0, 256, 256)
+                          it.draw(c)
                       }
+                      c.restore()
                   } else {
-                      // Ícone legado
-                      val tmp = Bitmap.createBitmap(tmpSize, tmpSize, Bitmap.Config.ARGB_8888)
-                      val tc = Canvas(tmp)
-                      tc.scale(s, s)
+                      // Ícones legados (que já vêm com tamanho cheio) recebem um zoom sutil
+                      // de 1.2x para eliminar qualquer borda transparente.
+                      c.save()
+                      c.scale(1.2f, 1.2f, 128f, 128f)
                       b.setBounds(0, 0, 256, 256)
-                      b.draw(tc)
-
-                      var minX = tmpSize; var minY = tmpSize; var maxX = -1; var maxY = -1
-                      val pixels = IntArray(tmpSize * tmpSize)
-                      tmp.getPixels(pixels, 0, tmpSize, 0, 0, tmpSize, tmpSize)
-                      for (y in 0 until tmpSize) {
-                          for (x in 0 until tmpSize) {
-                              if (((pixels[y * tmpSize + x] ushr 24) and 0xFF) > 10) {
-                                  if (x < minX) minX = x
-                                  if (x > maxX) maxX = x
-                                  if (y < minY) minY = y
-                                  if (y > maxY) maxY = y
-                              }
-                          }
-                      }
-                      tmp.recycle()
-
-                      if (maxX >= 0) {
-                          val boxW = (maxX - minX + 1) / s
-                          val boxH = (maxY - minY + 1) / s
-                          val boxCx = (minX + maxX + 1) / 2f / s
-                          val boxCy = (minY + maxY + 1) / 2f / s
-
-                          if (boxW > 256 * 0.9f && boxH > 256 * 0.9f) {
-                              // Já preenche tudo, desenha sem zoom
-                              b.setBounds(0, 0, 256, 256)
-                              b.draw(c)
-                          } else {
-                              // Está descentralizado/pequeno, aplica zoom
-                              val targetSize = 256 * 0.85f
-                              val scale = Math.min(targetSize / boxW, targetSize / boxH)
-                              c.save()
-                              c.translate(128f, 128f)
-                              c.scale(scale, scale)
-                              c.translate(-boxCx, -boxCy)
-                              b.setBounds(0, 0, 256, 256)
-                              b.draw(c)
-                              c.restore()
-                          }
-                      } else {
-                          b.setBounds(0, 0, 256, 256)
-                          b.draw(c)
-                      }
+                      b.draw(c)
+                      c.restore()
                   }
               }
-              // ===================================================================
+              // ==============================================
 
               private fun phone(c: Canvas) {
                   gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
@@ -846,7 +769,7 @@ jobs:
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
-                  // NOTA: Nenhum PageTransformer para evitar qualquer alteração de escala.
+                  // Removido qualquer PageTransformer para evitar alteração de escala.
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -1180,6 +1103,7 @@ jobs:
                   }
               }
 
+              // Launch direto, SEM efeitos de escala ou overlay
               private fun launch(a: AppItem, anchor: View? = null) {
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
@@ -1249,21 +1173,9 @@ jobs:
                   }
               }
 
-              // Toque suave por opacidade. NUNCA mexe em scaleX/scaleY.
+              // Efeito de toque completamente removido. Nenhuma view altera seu tamanho.
               private fun pressable(v: View) {
-                  v.setOnTouchListener { view, ev ->
-                      when (ev.actionMasked) {
-                          MotionEvent.ACTION_DOWN -> {
-                              view.animate().cancel()
-                              view.animate().alpha(0.6f).setDuration(100).start()
-                          }
-                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                              view.animate().cancel()
-                              view.animate().alpha(1f).setDuration(200).start()
-                          }
-                      }
-                      false
-                  }
+                  // Intencionalmente vazio (sem alteração de escala/alpha)
               }
 
               private fun folderIconView(f: Entry.Folder): View {
@@ -1385,7 +1297,6 @@ jobs:
                       }
                       true
                   }
-                  pressable(col)
                   if (editing) wiggle(col)
                   return col
               }
@@ -1537,7 +1448,6 @@ jobs:
                           scaleType = ImageView.ScaleType.FIT_XY
                       }
 
-                      pressable(iv)
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -1957,7 +1867,6 @@ jobs:
                       }
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
-                      pressable(iv)
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           appMenu(a.pkg, Where.LIBRARY)
