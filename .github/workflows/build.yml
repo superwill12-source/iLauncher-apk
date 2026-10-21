@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 18
-                  versionName = "4.2"
+                  versionCode = 19
+                  versionName = "4.3"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -622,6 +622,8 @@ jobs:
           cat > proj/app/src/main/java/com/ioslauncher/MainActivity.kt <<'EOF_FILE'
           package com.ioslauncher
 
+          import android.animation.ObjectAnimator
+          import android.animation.ValueAnimator
           import android.app.Activity
           import android.app.ActivityOptions
           import android.app.AlertDialog
@@ -655,6 +657,8 @@ jobs:
           import android.view.MotionEvent
           import android.view.View
           import android.view.ViewGroup
+          import android.view.animation.DecelerateInterpolator
+          import android.view.animation.OvershootInterpolator
           import android.view.inputmethod.EditorInfo
           import android.view.inputmethod.InputMethodManager
           import android.widget.BaseAdapter
@@ -737,6 +741,7 @@ jobs:
               private var groupOverlay: View? = null
               private var groupFolder: Entry.Folder? = null
               private var searchOverlay: View? = null
+              private var launchOverlay: ImageView? = null
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
               private val iconPx get() = (resources.displayMetrics.widthPixels / COLS * 0.72f).toInt()
@@ -748,13 +753,12 @@ jobs:
                       setColor(color)
                   }
 
-              // Efeito de "vidro fosco" para o Dock
               private fun glassBackground(): GradientDrawable =
                   GradientDrawable().apply {
                       shape = GradientDrawable.RECTANGLE
                       cornerRadius = dp(36).toFloat()
-                      colors = intArrayOf(0x80FFFFFF.toInt(), 0x40FFFFFF) // Gradiente translúcido
-                      setStroke(dp(1), 0x50FFFFFF) // Borda fina de vidro
+                      colors = intArrayOf(0x80FFFFFF.toInt(), 0x40FFFFFF)
+                      setStroke(dp(1), 0x50FFFFFF)
                   }
 
               // ================= Ciclo de vida =================
@@ -776,6 +780,16 @@ jobs:
                   pager = ViewPager2(this)
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
+                  
+                  // Efeito de transição fluido entre as páginas
+                  pager.setPageTransformer { page, position ->
+                      val a = Math.min(Math.abs(position), 1f)
+                      val sc = 1f - 0.06f * a
+                      page.scaleX = sc
+                      page.scaleY = sc
+                      page.alpha = 1f - 0.2f * a
+                  }
+
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -804,13 +818,12 @@ jobs:
                       bottomMargin = dp(10)
                   })
 
-                  // Configuração do Dock com efeito de vidro e sombra
                   dock = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER
                       setPadding(dp(16), dp(12), dp(16), dp(12))
                       background = glassBackground()
-                      elevation = dp(8).toFloat() // Sombra para dar profundidade
+                      elevation = dp(8).toFloat()
                   }
                   column.addView(dock, LinearLayout.LayoutParams(MATCH, WRAP).apply {
                       setMargins(dp(10), 0, dp(10), dp(12))
@@ -863,10 +876,15 @@ jobs:
 
               override fun onResume() {
                   super.onResume()
+                  dismissLaunch(true)
                   refresh()
+                  resetAllIconScales()
+                  resetDockIcons()
                   if (loaded) {
                       pager.postDelayed({
                           pager.adapter?.notifyDataSetChanged()
+                          resetAllIconScales()
+                          resetDockIcons()
                       }, 300)
                   }
               }
@@ -888,6 +906,44 @@ jobs:
                       groupOverlay != null -> closeGroup()
                       editing -> setEditing(false)
                       pager.currentItem != 1 -> pager.setCurrentItem(1, true)
+                  }
+              }
+
+              // ================= Helpers de animação / reset =================
+
+              private fun resetTouchState(v: View?) {
+                  v ?: return
+                  v.animate().cancel()
+                  v.scaleX = 1f
+                  v.scaleY = 1f
+                  v.alpha = 1f
+              }
+
+              private fun resetAllIconScales() {
+                  val rv = pager.getChildAt(0) as? RecyclerView ?: return
+                  for (i in 0 until rv.childCount) {
+                      val page = rv.getChildAt(i)
+                      resetViewHierarchy(page)
+                  }
+                  resetDockIcons()
+              }
+
+              private fun resetViewHierarchy(v: View) {
+                  if (v is ViewGroup) {
+                  for (i in 0 until v.childCount) {
+                      resetViewHierarchy(v.getChildAt(i))
+                  }
+                  }
+                  v.scaleX = 1f
+                  v.scaleY = 1f
+              }
+
+              private fun resetDockIcons() {
+                  for (i in 0 until dock.childCount) {
+                      val frame = dock.getChildAt(i) as? ViewGroup ?: continue
+                      for (j in 0 until frame.childCount) {
+                          resetTouchState(frame.getChildAt(j))
+                      }
                   }
               }
 
@@ -1110,18 +1166,63 @@ jobs:
                   }
               }
 
-              private fun launch(a: AppItem, anchor: View? = null) {
+              // ========== ANIMAÇÃO DE ABERTURA FLUIDA ==========
+              private fun launch(a: AppItem, anchor: View?, animated: View? = null) {
+                  resetTouchState(animated ?: anchor)
+
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
                   ).toBundle()
-                  try {
-                      startActivity(a.intent, opts)
-                  } catch (_: Exception) {
-                      Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                  if (anchor == null || anchor.width == 0 || launchOverlay != null) {
+                      try {
+                          startActivity(a.intent, opts)
+                      } catch (_: Exception) {
+                          Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                      }
                       return
                   }
-                  if (searchOverlay != null) closeSearch()
-                  if (groupOverlay != null) closeGroup()
+
+                  val cl = IntArray(2)
+                  content.getLocationOnScreen(cl)
+                  val vl = IntArray(2)
+                  anchor.getLocationOnScreen(vl)
+                  val iv = ImageView(this)
+                  val copy = a.icon.constantState?.newDrawable()?.mutate() ?: a.icon
+                  iv.setImageDrawable(copy)
+                  iv.scaleType = ImageView.ScaleType.FIT_XY
+                  val lp = FrameLayout.LayoutParams(anchor.width, anchor.height)
+                  lp.leftMargin = vl[0] - cl[0] - content.paddingLeft
+                  lp.topMargin = vl[1] - cl[1] - content.paddingTop
+                  content.addView(iv, lp)
+                  launchOverlay = iv
+                  
+                  val big = resources.displayMetrics.widthPixels * 1.15f / anchor.width
+                  iv.animate().scaleX(big).scaleY(big).setDuration(240)
+                      .setInterpolator(DecelerateInterpolator(1.3f))
+                      .start()
+                      
+                  iv.postDelayed({
+                      try {
+                          startActivity(a.intent, opts)
+                      } catch (_: Exception) {
+                          Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                          dismissLaunch(false)
+                      }
+                  }, 90)
+                  iv.postDelayed({ if (launchOverlay === iv) dismissLaunch(true) }, 3000)
+              }
+
+              private fun dismissLaunch(animate: Boolean) {
+                  val iv = launchOverlay ?: return
+                  launchOverlay = null
+                  if (animate) {
+                      iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(280)
+                          .setInterpolator(DecelerateInterpolator())
+                          .withEndAction { content.removeView(iv) }
+                          .start()
+                  } else {
+                      content.removeView(iv)
+                  }
               }
 
               private fun setEditing(on: Boolean) {
@@ -1172,7 +1273,6 @@ jobs:
 
               // ================= Ícones =================
 
-              // Clona o Drawable para evitar conflito de "bounds" entre views (Home, Dock, Pasta)
               private fun roundIcon(d: Drawable, size: Int): ImageView {
                   return ImageView(this).apply {
                       val copy = d.constantState?.newDrawable()?.mutate() ?: d
@@ -1181,17 +1281,19 @@ jobs:
                   }
               }
 
-              // Efeito de fluidez de toque SEGURO: mexe apenas no alpha, nunca na escala
+              // Efeito elástico de toque
               private fun pressable(v: View) {
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
-                              view.animate().alpha(0.6f).setDuration(100).start()
+                              view.animate().scaleX(0.88f).scaleY(0.88f).setDuration(90)
+                                  .setInterpolator(DecelerateInterpolator()).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                               view.animate().cancel()
-                              view.animate().alpha(1f).setDuration(200).start()
+                              view.animate().scaleX(1f).scaleY(1f).setDuration(280)
+                                  .setInterpolator(OvershootInterpolator(2.5f)).start()
                           }
                       }
                       false
@@ -1219,6 +1321,27 @@ jobs:
                   }
                   box.addView(grid, FrameLayout.LayoutParams(MATCH, MATCH))
                   return box
+              }
+
+              // Efeito de tremelique (Wiggle) no modo edição
+              private fun wiggle(v: View) {
+                  val a = ObjectAnimator.ofFloat(v, View.ROTATION, -2.2f, 2.2f).apply {
+                      duration = 100L + (Math.random() * 40).toLong()
+                      repeatCount = ValueAnimator.INFINITE
+                      repeatMode = ValueAnimator.REVERSE
+                      startDelay = (Math.random() * 100).toLong()
+                  }
+                  v.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                      override fun onViewAttachedToWindow(view: View) {
+                          if (!a.isStarted) a.start()
+                      }
+
+                      override fun onViewDetachedFromWindow(view: View) {
+                          a.cancel()
+                      }
+                  })
+                  v.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                  if (v.isAttachedToWindow) a.start()
               }
 
               private fun labelView(text: String): TextView {
@@ -1280,7 +1403,7 @@ jobs:
                   col.setOnClickListener { v ->
                       if (!editing) {
                           when (e) {
-                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
+                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder, col) }
                               is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e)
                           }
                       }
@@ -1297,6 +1420,8 @@ jobs:
                       }
                       true
                   }
+                  pressable(col)
+                  if (editing) wiggle(col)
                   return col
               }
 
@@ -1349,6 +1474,8 @@ jobs:
                               dragSource?.let { src ->
                                   src.alpha = 1f
                                   src.animate().cancel()
+                                  src.scaleX = 1f
+                                  src.scaleY = 1f
                               }
                               dragSource = null
                               dragEntry = null
@@ -1444,10 +1571,9 @@ jobs:
 
                       val iv = roundIcon(a.icon, dockIconSize)
                       
-                      // Aplica o efeito de fluidez seguro
                       pressable(iv)
                       
-                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnClickListener { launch(a, iv, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                           appMenu(a.pkg, Where.DOCK)
@@ -1833,7 +1959,7 @@ jobs:
                   val copy = a.icon.constantState?.newDrawable()?.mutate() ?: a.icon
                   iv.setImageDrawable(copy)
                   tv.text = a.label
-                  row.setOnClickListener { launch(a, row) }
+                  row.setOnClickListener { launch(a, row, row) }
                   row.setOnLongClickListener {
                       appMenu(a.pkg, where)
                       true
@@ -1867,7 +1993,7 @@ jobs:
                       }
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
-                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnClickListener { launch(a, iv, iv) }
                       iv.setOnLongClickListener {
                           appMenu(a.pkg, Where.LIBRARY)
                           true
@@ -2030,7 +2156,7 @@ jobs:
                               val iv = roundIcon(a.icon, iconPx)
                               cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
                               cell.addView(labelView(a.label), LinearLayout.LayoutParams(MATCH, WRAP))
-                              cell.setOnClickListener { launch(a, iv) }
+                              cell.setOnClickListener { launch(a, iv, cell) }
                               cell.setOnLongClickListener {
                                   it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                   appMenu(a.pkg, if (folder != null) Where.FOLDER else Where.LIBRARY, folder)
@@ -2063,6 +2189,16 @@ jobs:
                   }
                   groupOverlay = ov
                   groupFolder = folder
+
+                  ov.alpha = 0f
+                  panel.scaleX = 0.85f
+                  panel.scaleY = 0.85f
+                  panel.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                  ov.animate().alpha(1f).setDuration(180).start()
+                  panel.animate().scaleX(1f).scaleY(1f).setDuration(280)
+                      .setInterpolator(OvershootInterpolator(1.1f))
+                      .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
+                      .start()
               }
 
               private fun closeGroup() {
