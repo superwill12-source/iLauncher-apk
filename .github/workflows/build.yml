@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 26
-                  versionName = "6.2"
+                  versionCode = 27
+                  versionName = "6.3"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -146,10 +146,29 @@ jobs:
           cat > proj/app/src/main/res/values/themes.xml <<'EOF_FILE'
           <resources>
               <style name="LauncherTheme" parent="@android:style/Theme.Material.Wallpaper.NoTitleBar">
+                  <!-- Habilita o wallpaper -->
                   <item name="android:windowShowWallpaper">true</item>
+                  <!-- Fundo transparente para não cobrir o wallpaper -->
+                  <item name="android:windowBackground">@android:color/transparent</item>
+                  
+                  <!-- Desenha o sistema de barras por cima do wallpaper -->
+                  <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+                  
+                  <!-- Transparência total das barras -->
                   <item name="android:statusBarColor">@android:color/transparent</item>
                   <item name="android:navigationBarColor">@android:color/transparent</item>
+                  <item name="android:navigationBarDividerColor">@android:color/transparent</item>
+                  
+                  <!-- Desativa o Scrim de Contraste (a causa das faixas brancas) -->
+                  <item name="android:enforceStatusBarContrast">false</item>
+                  <item name="android:enforceNavigationBarContrast">false</item>
+                  
+                  <!-- Ícones escuros/claros das barras -->
                   <item name="android:windowLightStatusBar">false</item>
+                  <item name="android:windowLightNavigationBar">false</item>
+                  
+                  <!-- Permite que o conteúdo ocupe a área do recorte da câmera (notch) -->
+                  <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
               </style>
           </resources>
           EOF_FILE
@@ -620,6 +639,7 @@ jobs:
           import android.graphics.drawable.GradientDrawable
           import android.net.Uri
           import android.os.BatteryManager
+          import android.os.Build
           import android.os.Bundle
           import android.os.Environment
           import android.os.Handler
@@ -652,6 +672,7 @@ jobs:
           import androidx.core.view.ViewCompat
           import androidx.core.view.WindowCompat
           import androidx.core.view.WindowInsetsCompat
+          import androidx.core.view.WindowInsetsControllerCompat
           import androidx.core.widget.doAfterTextChanged
           import androidx.dynamicanimation.animation.DynamicAnimation
           import androidx.dynamicanimation.animation.SpringAnimation
@@ -751,6 +772,18 @@ jobs:
                   super.onCreate(savedInstanceState)
                   store = Store(this)
                   WindowCompat.setDecorFitsSystemWindows(window, false)
+                  
+                  // Desativa o Scrim de Contraste (Faixas Brancas) no Android 10+
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                      window.isStatusBarContrastEnforced = false
+                      window.isNavigationBarContrastEnforced = false
+                  }
+                  window.statusBarColor = Color.TRANSPARENT
+                  window.navigationBarColor = Color.TRANSPARENT
+                  WindowInsetsControllerCompat(window, window.decorView).apply {
+                      isAppearanceLightStatusBars = false
+                      isAppearanceLightNavigationBars = false
+                  }
 
                   cols = store.cols
                   rows = store.rows
@@ -758,8 +791,10 @@ jobs:
                   iconPx = (resources.displayMetrics.widthPixels / cols * 0.72f * iconScale).toInt()
 
                   content = FrameLayout(this)
+                  // Não usa padding global, deixa o edge-to-edge fluir
                   ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
                       val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      // Aplica padding apenas no topo e base para o conteúdo não ficar atrás da barra de status/navegação
                       v.setPadding(0, sys.top, 0, sys.bottom)
                       insets
                   }
@@ -1627,7 +1662,6 @@ jobs:
                                   )
                               )
                           }
-                          // Sempre ativo para permitir arrastar da biblioteca
                           slot.setOnDragListener(slotListener(e, hp))
                           row.addView(slot, LinearLayout.LayoutParams(0, MATCH, 1f))
                       }
