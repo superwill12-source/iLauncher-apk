@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 23
-                  versionName = "5.3"
+                  versionCode = 24
+                  versionName = "6.0"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -86,6 +86,7 @@ jobs:
 
               <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
               <uses-permission android:name="android.permission.VIBRATE" />
+              <uses-permission android:name="android.permission.SET_WALLPAPER" />
 
               <queries>
                   <intent>
@@ -107,6 +108,7 @@ jobs:
                       <action android:name="android.intent.action.MAIN" />
                       <category android:name="android.intent.category.APP_CALENDAR" />
                   </intent>
+                  <intent><action android:name="android.intent.action.SET_WALLPAPER" /></intent>
               </queries>
 
               <application
@@ -161,6 +163,25 @@ jobs:
           class Store(ctx: Context) {
               private val sp = ctx.getSharedPreferences("layout", Context.MODE_PRIVATE)
 
+              var cols = 4
+              var rows = 5
+              var iconScale = 1.0f
+
+              init {
+                  loadSettings()
+              }
+
+              private fun loadSettings() {
+                  cols = sp.getInt("cols", 4)
+                  rows = sp.getInt("rows", 5)
+                  iconScale = sp.getFloat("icon_scale", 1.0f)
+              }
+
+              fun saveSettings(c: Int, r: Int, scale: Float) {
+                  cols = c; rows = r; iconScale = scale
+                  sp.edit().putInt("cols", c).putInt("rows", r).putFloat("icon_scale", scale).apply()
+              }
+
               fun loadHome(): MutableList<Entry> {
                   val out = mutableListOf<Entry>()
                   val s = sp.getString("home", null) ?: return out
@@ -177,8 +198,7 @@ jobs:
                               out.add(Entry.Folder(o.getString("n"), l))
                           }
                       }
-                  } catch (_: Exception) {
-                  }
+                  } catch (_: Exception) {}
                   return out
               }
 
@@ -246,18 +266,14 @@ jobs:
           import java.util.Locale
 
           object Icons {
-
               fun build(label: String, pkg: String, base: Drawable): Drawable =
                   IosIcon(kindOf(label, pkg), base)
 
               fun kindOf(label: String, pkg: String): String {
                   val p = pkg.lowercase()
                   val l = label.lowercase()
-                  
                   val smsPkgs = listOf("messag", "sms", "mms", "textra", "chomp", "handcent")
-                  val isSms = smsPkgs.any { p.contains(it) } || 
-                              l.contains("mensag") || l.contains("messages") || l.contains("sms") || l.contains("mensagem")
-                  
+                  val isSms = smsPkgs.any { p.contains(it) } || l.contains("mensag") || l.contains("messages") || l.contains("sms") || l.contains("mensagem")
                   return when {
                       p.contains("dialer") || p.endsWith(".phone") || l == "telefone" || l == "phone" -> "phone"
                       isSms -> "messages"
@@ -265,8 +281,7 @@ jobs:
                       p == "com.android.settings" || l == "configurações" || l == "settings" || l == "ajustes" -> "settings"
                       p.contains("clock") || l == "relógio" || l == "clock" -> "clock"
                       p.contains("calculator") || p.contains("calc") -> "calculator"
-                      p.contains("chrome") || p.contains("browser") || p.contains("firefox") ||
-                          p.contains("brave") || p.contains("opera") || p.contains("msedge") -> "browser"
+                      p.contains("chrome") || p.contains("browser") || p.contains("firefox") || p.contains("brave") || p.contains("opera") || p.contains("msedge") -> "browser"
                       p.contains("gallery") || p.contains("photos") || l == "galeria" || l == "fotos" -> "photos"
                       p.contains("calendar") || l == "agenda" || l == "calendário" -> "calendar"
                       p.contains("notes") || p.contains("keep") || p.contains("notepad") || l == "notas" -> "notes"
@@ -297,28 +312,20 @@ jobs:
           }
 
           class IosIcon(private val kind: String, private val base: Drawable) : Drawable() {
-
               private val SIZE = 192
               private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-
-              @Volatile
-              private var cache: Bitmap? = null
-
-              @Volatile
-              private var cacheStamp = -1L
+              @Volatile private var cache: Bitmap? = null
+              @Volatile private var cacheStamp = -1L
 
               override fun getIntrinsicWidth() = SIZE
               override fun getIntrinsicHeight() = SIZE
 
-              private fun stamp(): Long =
-                  if (kind == "clock" || kind == "calendar") System.currentTimeMillis() / 60000L else 0L
+              private fun stamp(): Long = if (kind == "clock" || kind == "calendar") System.currentTimeMillis() / 60000L else 0L
 
               override fun draw(canvas: Canvas) {
                   val cached = cache
                   val st = stamp()
-                  val b = if (cached != null && st == cacheStamp) {
-                      cached
-                  } else {
+                  val b = if (cached != null && st == cacheStamp) cached else {
                       val r = render()
                       cache = r
                       cacheStamp = st
@@ -327,16 +334,9 @@ jobs:
                   canvas.drawBitmap(b, null, bounds, paint)
               }
 
-              override fun setAlpha(alpha: Int) {
-                  paint.alpha = alpha
-              }
-
-              override fun setColorFilter(colorFilter: ColorFilter?) {
-                  paint.colorFilter = colorFilter
-              }
-
-              @Deprecated("Deprecated in Java")
-              override fun getOpacity() = PixelFormat.TRANSLUCENT
+              override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+              override fun setColorFilter(colorFilter: ColorFilter?) { paint.colorFilter = colorFilter }
+              @Deprecated("Deprecated in Java") override fun getOpacity() = PixelFormat.TRANSLUCENT
 
               override fun getConstantState(): ConstantState {
                   return object : ConstantState() {
@@ -346,7 +346,6 @@ jobs:
               }
 
               private fun k(v: Long): Int = v.toInt()
-
               private fun pt(color: Int, stroke: Float = 0f): Paint {
                   val p = Paint(Paint.ANTI_ALIAS_FLAG)
                   p.color = color
@@ -390,31 +389,22 @@ jobs:
                   val p = Paint(Paint.ANTI_ALIAS_FLAG)
                   p.shader = BitmapShader(raw, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
                   oc.drawPath(Icons.squircle(SIZE.toFloat()), p)
-
                   val stroke = Paint(Paint.ANTI_ALIAS_FLAG)
                   stroke.style = Paint.Style.STROKE
                   stroke.strokeWidth = 1.5f
                   stroke.color = 0x1A000000
                   oc.drawPath(Icons.squircle(SIZE.toFloat()), stroke)
-
                   return out
               }
 
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
-
                   if (b is AdaptiveIconDrawable) {
                       c.save()
                       c.scale(1.5f, 1.5f, 128f, 128f)
-                      b.background?.let {
-                          it.setBounds(0, 0, 256, 256)
-                          it.draw(c)
-                      }
-                      b.foreground?.let {
-                          it.setBounds(0, 0, 256, 256)
-                          it.draw(c)
-                      }
+                      b.background?.let { it.setBounds(0, 0, 256, 256); it.draw(c) }
+                      b.foreground?.let { it.setBounds(0, 0, 256, 256); it.draw(c) }
                       c.restore()
                   } else {
                       c.save()
@@ -439,10 +429,7 @@ jobs:
                   val w = pt(Color.WHITE)
                   c.drawOval(RectF(40f, 50f, 216f, 180f), w)
                   val t = Path()
-                  t.moveTo(78f, 160f)
-                  t.lineTo(54f, 214f)
-                  t.lineTo(122f, 176f)
-                  t.close()
+                  t.moveTo(78f, 160f); t.lineTo(54f, 214f); t.lineTo(122f, 176f); t.close()
                   c.drawPath(t, w)
               }
 
@@ -524,26 +511,17 @@ jobs:
                   c.save()
                   c.rotate(45f, 128f, 128f)
                   val red = Path()
-                  red.moveTo(128f, 52f)
-                  red.lineTo(110f, 128f)
-                  red.lineTo(146f, 128f)
-                  red.close()
+                  red.moveTo(128f, 52f); red.lineTo(110f, 128f); red.lineTo(146f, 128f); red.close()
                   c.drawPath(red, pt(k(0xFFFF3B30)))
                   val white = Path()
-                  white.moveTo(128f, 204f)
-                  white.lineTo(110f, 128f)
-                  white.lineTo(146f, 128f)
-                  white.close()
+                  white.moveTo(128f, 204f); white.lineTo(110f, 128f); white.lineTo(146f, 128f); white.close()
                   c.drawPath(white, pt(Color.WHITE))
                   c.restore()
               }
 
               private fun photos(c: Canvas) {
                   c.drawColor(Color.WHITE)
-                  val colors = listOf(
-                      k(0xFFFFCC00), k(0xFFFF9500), k(0xFFFF3B30), k(0xFFFF2D55),
-                      k(0xFFAF52DE), k(0xFF007AFF), k(0xFF34C759), k(0xFF5AC8FA)
-                  )
+                  val colors = listOf(k(0xFFFFCC00), k(0xFFFF9500), k(0xFFFF3B30), k(0xFFFF2D55), k(0xFFAF52DE), k(0xFF007AFF), k(0xFF34C759), k(0xFF5AC8FA))
                   for (i in 0 until 8) {
                       val rad = Math.toRadians(i * 45.0)
                       val cx = 128f + (Math.sin(rad) * 50).toFloat()
@@ -560,13 +538,11 @@ jobs:
                   val wd = SimpleDateFormat("EEE", Locale.getDefault()).format(now).uppercase().take(3)
                   val dd = SimpleDateFormat("d", Locale.getDefault()).format(now)
                   val t1 = pt(k(0xFFFF3B30))
-                  t1.textSize = 40f
-                  t1.textAlign = Paint.Align.CENTER
+                  t1.textSize = 40f; t1.textAlign = Paint.Align.CENTER
                   t1.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                   c.drawText(wd, 128f, 78f, t1)
                   val t2 = pt(k(0xFF1C1C1E))
-                  t2.textSize = 150f
-                  t2.textAlign = Paint.Align.CENTER
+                  t2.textSize = 150f; t2.textAlign = Paint.Align.CENTER
                   t2.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                   c.drawText(dd, 128f, 206f, t2)
               }
@@ -586,10 +562,7 @@ jobs:
                   c.drawLine(0f, 170f, 256f, 130f, pt(k(0xFF4A90E2), 22f))
                   c.drawCircle(170f, 96f, 36f, pt(k(0xFFFF3B30)))
                   val tip = Path()
-                  tip.moveTo(140f, 118f)
-                  tip.lineTo(200f, 118f)
-                  tip.lineTo(170f, 176f)
-                  tip.close()
+                  tip.moveTo(140f, 118f); tip.lineTo(200f, 118f); tip.lineTo(170f, 176f); tip.close()
                   c.drawPath(tip, pt(k(0xFFFF3B30)))
                   c.drawCircle(170f, 96f, 13f, pt(Color.WHITE))
               }
@@ -598,9 +571,7 @@ jobs:
                   gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
                   c.drawRoundRect(RectF(38f, 72f, 218f, 184f), 16f, 16f, pt(Color.WHITE))
                   val flap = Path()
-                  flap.moveTo(50f, 86f)
-                  flap.lineTo(128f, 144f)
-                  flap.lineTo(206f, 86f)
+                  flap.moveTo(50f, 86f); flap.lineTo(128f, 144f); flap.lineTo(206f, 86f)
                   c.drawPath(flap, pt(k(0xFF2F90FF), 9f).also { it.strokeJoin = Paint.Join.ROUND })
               }
 
@@ -612,11 +583,7 @@ jobs:
                   c.drawRect(108f, 76f, 120f, 172f, w)
                   c.drawRect(178f, 58f, 190f, 154f, w)
                   val beam = Path()
-                  beam.moveTo(108f, 76f)
-                  beam.lineTo(190f, 58f)
-                  beam.lineTo(190f, 84f)
-                  beam.lineTo(108f, 102f)
-                  beam.close()
+                  beam.moveTo(108f, 76f); beam.lineTo(190f, 58f); beam.lineTo(190f, 84f); beam.lineTo(108f, 102f); beam.close()
                   c.drawPath(beam, w)
               }
 
@@ -674,6 +641,7 @@ jobs:
           import android.widget.LinearLayout
           import android.widget.ListView
           import android.widget.ScrollView
+          import android.widget.SeekBar
           import android.widget.TextClock
           import android.widget.TextView
           import android.widget.Toast
@@ -712,7 +680,6 @@ jobs:
 
               private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
               private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
-              private val COLS = 4
               private val CATEGORIES = listOf(
                   "Social", "Entretenimento", "Foto e Vídeo", "Produtividade",
                   "Finanças", "Viagens", "Notícias", "Jogos", "Utilidades"
@@ -733,7 +700,13 @@ jobs:
               private var dockPkgs = mutableListOf<String>()
               private var hidden = mutableSetOf<String>()
               private var homePages = listOf<List<Entry>>()
+              
+              // Variáveis de Customização
+              private var cols = 4
               private var rows = 5
+              private var iconScale = 1.0f
+              private var iconPx = 0
+
               private var editing = false
               private var positioned = false
               @Volatile private var loaded = false
@@ -747,10 +720,8 @@ jobs:
               private var groupOverlay: View? = null
               private var groupFolder: Entry.Folder? = null
               private var searchOverlay: View? = null
-              private var launchOverlay: ImageView? = null
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-              private val iconPx get() = (resources.displayMetrics.widthPixels / COLS * 0.72f).toInt()
               private fun cellH() = iconPx + dp(8) + dp(22) + dp(14)
 
               private fun rounded(color: Int, r: Int): GradientDrawable =
@@ -773,6 +744,11 @@ jobs:
                   super.onCreate(savedInstanceState)
                   store = Store(this)
                   WindowCompat.setDecorFitsSystemWindows(window, false)
+
+                  cols = store.cols
+                  rows = store.rows
+                  iconScale = store.iconScale
+                  iconPx = (resources.displayMetrics.widthPixels / cols * 0.72f * iconScale).toInt()
 
                   content = FrameLayout(this)
                   ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
@@ -831,11 +807,25 @@ jobs:
                       background = glassBackground()
                       elevation = dp(8).toFloat()
                   }
+                  // Permite arrastar apps para o dock
+                  dock.setOnDragListener(dockDragListener())
                   column.addView(dock, LinearLayout.LayoutParams(MATCH, WRAP).apply {
                       setMargins(dp(10), 0, dp(10), dp(12))
                   })
 
                   content.addView(column, FrameLayout.LayoutParams(MATCH, MATCH))
+
+                  // BOTÃO DE CONFIGURAÇÕES
+                  val gearBtn = TextView(this).apply {
+                      text = "⚙️"
+                      textSize = 24f
+                      gravity = Gravity.CENTER
+                      setPadding(dp(12), dp(8), dp(12), dp(8))
+                      setOnClickListener { openSettings() }
+                  }
+                  content.addView(gearBtn, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.TOP or Gravity.END).apply {
+                      setMargins(0, dp(10), dp(10), 0)
+                  })
 
                   doneBtn = TextView(this).apply {
                       text = "OK"
@@ -885,9 +875,6 @@ jobs:
                   refresh()
                   resetAllIconScales()
                   resetDockIcons()
-                  // NOTA: O "notifyDataSetChanged" foi removido daqui.
-                  // Ele era o principal consumidor de bateria, pois recriava
-                  // toda a tela sempre que o usuário voltava ao launcher.
               }
 
               override fun onNewIntent(intent: Intent?) {
@@ -908,6 +895,47 @@ jobs:
                       editing -> setEditing(false)
                       pager.currentItem != 1 -> pager.setCurrentItem(1, true)
                   }
+              }
+
+              // ================= Configurações =================
+              private fun openSettings() {
+                  val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                      .setTitle("Personalização")
+                      .setItems(arrayOf("Alterar Papel de Parede", "Grade de Ícones", "Tamanho dos Ícones")) { _, i ->
+                          when (i) {
+                              0 -> {
+                                  tryStart(Intent(Intent.ACTION_SET_WALLPAPER))
+                              }
+                              1 -> {
+                                  val options = arrayOf("4 Colunas x 5 Linhas", "4 Colunas x 6 Linhas", "5 Colunas x 5 Linhas", "5 Colunas x 6 Linhas")
+                                  AlertDialog.Builder(this@MainActivity)
+                                      .setTitle("Escolha a Grade")
+                                      .setItems(options) { _, opt ->
+                                          when (opt) {
+                                              0 -> { store.saveSettings(4, 5, store.iconScale); recreate() }
+                                              1 -> { store.saveSettings(4, 6, store.iconScale); recreate() }
+                                              2 -> { store.saveSettings(5, 5, store.iconScale); recreate() }
+                                              3 -> { store.saveSettings(5, 6, store.iconScale); recreate() }
+                                          }
+                                      }.show()
+                              }
+                              2 -> {
+                                  val options = arrayOf("Pequeno", "Médio", "Grande")
+                                  AlertDialog.Builder(this@MainActivity)
+                                      .setTitle("Tamanho dos Ícones")
+                                      .setItems(options) { _, opt ->
+                                          when (opt) {
+                                              0 -> { store.saveSettings(store.cols, store.rows, 0.85f); recreate() }
+                                              1 -> { store.saveSettings(store.cols, store.rows, 1.0f); recreate() }
+                                              2 -> { store.saveSettings(store.cols, store.rows, 1.15f); recreate() }
+                                          }
+                                      }.show()
+                              }
+                          }
+                      }
+                      .create()
+                  dlg.show()
+                  dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
               }
 
               // ================= Helpers de animação / reset =================
@@ -931,9 +959,9 @@ jobs:
 
               private fun resetViewHierarchy(v: View) {
                   if (v is ViewGroup) {
-                  for (i in 0 until v.childCount) {
-                      resetViewHierarchy(v.getChildAt(i))
-                  }
+                      for (i in 0 until v.childCount) {
+                          resetViewHierarchy(v.getChildAt(i))
+                      }
                   }
                   v.scaleX = 1f
                   v.scaleY = 1f
@@ -963,8 +991,7 @@ jobs:
                   val p = pkg.lowercase()
                   return when {
                       listOf("camera", "gallery", "photo", "galer").any { p.contains(it) } -> "Foto e Vídeo"
-                      listOf("whatsapp", "telegram", "facebook", "instagram", "twitter", "messag", "mms",
-                          "dialer", "contacts", "tiktok", "snapchat", "discord").any { p.contains(it) } -> "Social"
+                      listOf("whatsapp", "telegram", "facebook", "instagram", "twitter", "messag", "mms", "dialer", "contacts", "tiktok", "snapchat", "discord").any { p.contains(it) } -> "Social"
                       listOf("youtube", "netflix", "spotify", "music", "video", "player", "disney").any { p.contains(it) } -> "Entretenimento"
                       listOf("maps", "uber", "booking", "airbnb", "travel").any { p.contains(it) } -> "Viagens"
                       listOf("bank", "nubank", "wallet", "finance", "itau", "bradesco", "santander").any { p.contains(it) } -> "Finanças"
@@ -1001,8 +1028,7 @@ jobs:
                               )
                           }
                           runOnUiThread { if (gen == refreshGen) applyApps(m, sig) }
-                      } catch (_: Exception) {
-                      }
+                      } catch (_: Exception) {}
                   }
               }
 
@@ -1024,9 +1050,7 @@ jobs:
                       Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com")),
                       Intent(MediaStore.ACTION_IMAGE_CAPTURE)
                   )
-                  return probes
-                      .mapNotNull { pm.resolveActivity(it, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }
-                      .distinct()
+                  return probes.mapNotNull { pm.resolveActivity(it, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName }.distinct()
               }
 
               private fun syncLayout() {
@@ -1040,9 +1064,7 @@ jobs:
                   for (e in home) {
                       when (e) {
                           is Entry.App -> {
-                              if (apps.containsKey(e.pkg) && e.pkg !in dockPkgs && e.pkg !in hidden && seen.add(e.pkg)) {
-                                  cleaned.add(e)
-                              }
+                              if (apps.containsKey(e.pkg) && e.pkg !in dockPkgs && e.pkg !in hidden && seen.add(e.pkg)) cleaned.add(e)
                           }
                           is Entry.Folder -> {
                               e.pkgs.retainAll { apps.containsKey(it) && it !in dockPkgs && it !in hidden && seen.add(it) }
@@ -1090,7 +1112,7 @@ jobs:
               private fun applyGrid() {
                   if (pager.height > maxPagerH) maxPagerH = pager.height
                   val h = maxPagerH
-                  val newRows = if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 6) else rows
+                  val newRows = if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 8) else rows
                   if (newRows != rows || homePages.isEmpty()) {
                       rows = newRows
                       if (loaded) rebuild()
@@ -1098,7 +1120,7 @@ jobs:
               }
 
               private fun rebuild() {
-                  val per = COLS * rows
+                  val per = cols * rows
                   homePages = home.chunked(per).ifEmpty { listOf(emptyList<Entry>()) }
                   pager.adapter?.notifyDataSetChanged()
                   if (!positioned && loaded) {
@@ -1111,7 +1133,6 @@ jobs:
               }
 
               // ================= Operações =================
-
               private fun removeFromHome(pkg: String) {
                   home = home.filterNot { it is Entry.App && it.pkg == pkg }.toMutableList()
                   for (e in home) if (e is Entry.Folder) e.pkgs.remove(pkg)
@@ -1135,7 +1156,7 @@ jobs:
               private fun dockApp(pkg: String) {
                   removeFromHome(pkg)
                   hidden.remove(pkg)
-                  if (dockPkgs.size < 4 && pkg !in dockPkgs) dockPkgs.add(pkg)
+                  if (dockPkgs.size < 5 && pkg !in dockPkgs) dockPkgs.add(pkg)
                   commit()
               }
 
@@ -1163,14 +1184,11 @@ jobs:
               private fun appInfo(pkg: String) {
                   try {
                       startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
-                  } catch (_: Exception) {
-                  }
+                  } catch (_: Exception) {}
               }
 
-              // ========== ABERTURA ULTRA RÁPIDA ==========
               private fun launch(a: AppItem, anchor: View?) {
                   anchor?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-
                   val opts = if (anchor != null) {
                       try {
                           ActivityOptions.makeScaleUpAnimation(anchor, 0, 0, anchor.width, anchor.height).toBundle()
@@ -1180,7 +1198,6 @@ jobs:
                   } else {
                       ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
                   }
-
                   try {
                       startActivity(a.intent, opts)
                   } catch (_: Exception) {
@@ -1220,7 +1237,7 @@ jobs:
                           setEditing(true)
                       }
                       if (where == Where.DOCK) add("Tirar do Dock") { undock(pkg) }
-                      else if (pkg !in dockPkgs && dockPkgs.size < 4) add("Colocar no Dock") { dockApp(pkg) }
+                      else if (pkg !in dockPkgs && dockPkgs.size < 5) add("Colocar no Dock") { dockApp(pkg) }
                       if (where == Where.FOLDER && folder != null) add("Tirar da pasta") { takeOutOfFolder(pkg, folder) }
                       if (onHome) add("Remover da Tela de Início") { hideApp(pkg) }
                       else if (pkg !in dockPkgs) add("Adicionar à Tela de Início") { addToHome(pkg) }
@@ -1246,7 +1263,6 @@ jobs:
                   }
               }
 
-              // Efeito de mola super fluido (SpringAnimation)
               private fun pressable(v: View) {
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
@@ -1263,8 +1279,7 @@ jobs:
                               springX.spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
                               springY.spring.stiffness = SpringForce.STIFFNESS_MEDIUM
                               springY.spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
-                              springX.start()
-                              springY.start()
+                              springX.start(); springY.start()
                           }
                       }
                       false
@@ -1305,7 +1320,6 @@ jobs:
                       override fun onViewAttachedToWindow(view: View) {
                           if (!a.isStarted) a.start()
                       }
-
                       override fun onViewDetachedFromWindow(view: View) {
                           a.cancel()
                       }
@@ -1317,7 +1331,7 @@ jobs:
               private fun labelView(text: String): TextView {
                   return TextView(this).apply {
                       this.text = text
-                      textSize = 11.5f
+                      textSize = 11.5f * iconScale
                       typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
                       setTextColor(Color.WHITE)
                       setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
@@ -1395,7 +1409,7 @@ jobs:
                   return col
               }
 
-              // ================= Arrastar e soltar =================
+              // ================= Drag & Drop =================
 
               private fun startDrag(v: View, e: Entry) {
                   dragEntry = e
@@ -1418,6 +1432,26 @@ jobs:
                   } else if (x > w - dp(28) && cur < homePages.size) {
                       pager.setCurrentItem(cur + 1, true)
                       lastFlip = now
+                  }
+              }
+
+              private fun dockDragListener(): View.OnDragListener {
+                  return View.OnDragListener { v, ev ->
+                      when (ev.action) {
+                          DragEvent.ACTION_DRAG_STARTED -> dragEntry != null
+                          DragEvent.ACTION_DROP -> {
+                              val d = dragEntry
+                              v.post {
+                                  if (d is Entry.App) {
+                                      dockApp(d.pkg)
+                                  } else if (d is Entry.Folder) {
+                                      Toast.makeText(this, "Pastas não podem ir para o Dock", Toast.LENGTH_SHORT).show()
+                                  }
+                              }
+                              true
+                          }
+                          else -> true
+                      }
                   }
               }
 
@@ -1461,7 +1495,7 @@ jobs:
                       rebuild()
                       return
                   }
-                  val per = COLS * rows
+                  val per = cols * rows
                   val dIdx = home.indexOfFirst { it === d }
                   if (dIdx < 0) {
                       rebuild()
@@ -1504,14 +1538,14 @@ jobs:
                   for (r in 0 until rows) {
                       val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                       root.addView(row, LinearLayout.LayoutParams(MATCH, 0, 1f))
-                      for (c in 0 until COLS) {
+                      for (c in 0 until cols) {
                           val slot = FrameLayout(this)
-                          val e = items.getOrNull(r * COLS + c)
+                          val e = items.getOrNull(r * cols + c)
                           if (e != null) {
                               slot.addView(
                                   entryCell(e),
                                   FrameLayout.LayoutParams(
-                                      resources.displayMetrics.widthPixels / COLS - dp(6),
+                                      resources.displayMetrics.widthPixels / cols - dp(6),
                                       WRAP,
                                       Gravity.TOP or Gravity.CENTER_HORIZONTAL
                                   )
@@ -1532,7 +1566,7 @@ jobs:
                   }
                   dock.visibility = View.VISIBLE
 
-                  val dockIconSize = iconPx
+                  val dockIconSize = (iconPx * 0.9f).toInt()
 
                   for (pk in dockPkgs) {
                       val a = apps[pk] ?: continue
@@ -1540,9 +1574,7 @@ jobs:
                       frame.layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
 
                       val iv = roundIcon(a.icon, dockIconSize)
-                      
                       pressable(iv)
-                      
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
@@ -1581,20 +1613,17 @@ jobs:
                   pill.visibility = if (!editing && p >= 1 && p <= homePages.size) View.VISIBLE else View.INVISIBLE
               }
 
-              // ================= Helpers de "abrir configurações" =================
-
               private fun tryStart(vararg intents: Intent) {
                   for (i in intents) {
                       try {
                           startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                           return
-                      } catch (_: Exception) {
-                      }
+                      } catch (_: Exception) {}
                   }
                   Toast.makeText(this, "Não disponível neste aparelho", Toast.LENGTH_SHORT).show()
               }
 
-              // ================= Hoje (widgets) =================
+              // ================= Hoje =================
 
               private fun bar(pct: Int, color: Int): View {
                   val track = LinearLayout(this)
@@ -1630,7 +1659,6 @@ jobs:
                       background = rounded(0x99000000.toInt(), dp(22))
                       setPadding(dp(16), dp(14), dp(16), dp(14))
                   }
-                  // TEXTO ALTERADO AQUI
                   card.addView(tv("Temp. do Sistema", 13f, 0xFFBBBBBB.toInt(), true))
                   
                   val tempView = tv("—", 40f, Color.WHITE).apply {
@@ -1638,9 +1666,7 @@ jobs:
                   }
                   card.addView(tempView)
 
-                  card.setOnClickListener {
-                      tryStart(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
-                  }
+                  card.setOnClickListener { tryStart(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)) }
 
                   val handler = Handler(Looper.getMainLooper())
                   var running = false
@@ -1648,7 +1674,7 @@ jobs:
                       override fun run() {
                           if (!running || !card.isAttachedToWindow) return
                           if (pager.currentItem != 0) {
-                              handler.postDelayed(this, 5000) // Aumentado para 5s quando fora da tela
+                              handler.postDelayed(this, 5000)
                               return
                           }
                           try {
@@ -1659,9 +1685,7 @@ jobs:
                               } else {
                                   tempView.text = "—"
                               }
-                          } catch (_: Exception) {
-                          }
-                          // Aumentado para 10s para economizar bateria
+                          } catch (_: Exception) {}
                           handler.postDelayed(this, 10000L)
                       }
                   }
@@ -1670,7 +1694,6 @@ jobs:
                           running = true
                           handler.post(task)
                       }
-
                       override fun onViewDetachedFromWindow(v: View) {
                           running = false
                           handler.removeCallbacks(task)
@@ -1700,10 +1723,7 @@ jobs:
                       setTextColor(Color.WHITE)
                       setShadowLayer(6f, 0f, 1f, 0x66000000)
                       setOnClickListener {
-                          tryStart(
-                              Intent(AlarmClock.ACTION_SHOW_ALARMS),
-                              Intent(Settings.ACTION_DATE_SETTINGS)
-                          )
+                          tryStart(Intent(AlarmClock.ACTION_SHOW_ALARMS), Intent(Settings.ACTION_DATE_SETTINGS))
                       }
                   }
                   col.addView(clockView, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -1715,10 +1735,7 @@ jobs:
                       setTextColor(Color.WHITE)
                       setShadowLayer(6f, 0f, 1f, 0x66000000)
                       setOnClickListener {
-                          tryStart(
-                              Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALENDAR),
-                              Intent(Settings.ACTION_DATE_SETTINGS)
-                          )
+                          tryStart(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALENDAR), Intent(Settings.ACTION_DATE_SETTINGS))
                       }
                   }
                   col.addView(dateView, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -1731,23 +1748,11 @@ jobs:
                       background = rounded(Color.WHITE, dp(22))
                       setPadding(dp(16), dp(14), dp(16), dp(14))
                   }
-                  cal.addView(tv(
-                      java.text.SimpleDateFormat("EEEE", Locale.getDefault()).format(now).uppercase(),
-                      13f, 0xFFFF3B30.toInt(), true
-                  ))
-                  cal.addView(tv(
-                      java.text.SimpleDateFormat("d", Locale.getDefault()).format(now),
-                      58f, 0xFF111111.toInt()
-                  ).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) })
-                  cal.addView(tv(
-                      java.text.SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(now),
-                      13f, 0xFF6B6B6B.toInt()
-                  ))
+                  cal.addView(tv(java.text.SimpleDateFormat("EEEE", Locale.getDefault()).format(now).uppercase(), 13f, 0xFFFF3B30.toInt(), true))
+                  cal.addView(tv(java.text.SimpleDateFormat("d", Locale.getDefault()).format(now), 58f, 0xFF111111.toInt()).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) })
+                  cal.addView(tv(java.text.SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(now), 13f, 0xFF6B6B6B.toInt()))
                   cal.setOnClickListener {
-                      tryStart(
-                          Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALENDAR),
-                          Intent(Settings.ACTION_DATE_SETTINGS)
-                      )
+                      tryStart(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_CALENDAR), Intent(Settings.ACTION_DATE_SETTINGS))
                   }
                   row.addView(cal, LinearLayout.LayoutParams(side, side))
 
@@ -1763,19 +1768,11 @@ jobs:
                       setPadding(dp(16), dp(14), dp(16), dp(14))
                   }
                   bat.addView(tv("Bateria", 13f, 0xFFBBBBBB.toInt(), true))
-                  bat.addView(tv("$pct%", 40f, Color.WHITE).apply {
-                      typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-                  })
+                  bat.addView(tv("$pct%", 40f, Color.WHITE).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) })
                   bat.addView(tv(if (charging) "Carregando" else "Em uso", 13f, 0xFFBBBBBB.toInt()))
-                  bat.addView(
-                      bar(pct, if (pct < 20 && !charging) 0xFFFF3B30.toInt() else 0xFF34C759.toInt()),
-                      LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) }
-                  )
+                  bat.addView(bar(pct, if (pct < 20 && !charging) 0xFFFF3B30.toInt() else 0xFF34C759.toInt()), LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) })
                   bat.setOnClickListener {
-                      tryStart(
-                          Intent(Intent.ACTION_POWER_USAGE_SUMMARY),
-                          Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS)
-                      )
+                      tryStart(Intent(Intent.ACTION_POWER_USAGE_SUMMARY), Intent(Settings.ACTION_BATTERY_SAVER_SETTINGS))
                   }
                   row.addView(bat, LinearLayout.LayoutParams(side, side).apply { leftMargin = gap })
                   col.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(16) })
@@ -1787,8 +1784,7 @@ jobs:
                       total = sf.blockCountLong.toDouble() * sf.blockSizeLong / 1073741824.0
                       val free = sf.availableBlocksLong.toDouble() * sf.blockSizeLong / 1073741824.0
                       used = total - free
-                  } catch (_: Exception) {
-                  }
+                  } catch (_: Exception) {}
                   val sto = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       background = rounded(0x99000000.toInt(), dp(22))
@@ -1796,16 +1792,9 @@ jobs:
                   }
                   sto.addView(tv("Armazenamento", 13f, 0xFFBBBBBB.toInt(), true))
                   sto.addView(tv("%.1f GB de %.0f GB".format(used, total), 22f, Color.WHITE))
-                  sto.addView(
-                      bar((used / total * 100).toInt(), 0xFF0A84FF.toInt()),
-                      LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) }
-                  )
+                  sto.addView(bar((used / total * 100).toInt(), 0xFF0A84FF.toInt()), LinearLayout.LayoutParams(MATCH, dp(8)).apply { topMargin = dp(12) })
                   sto.setOnClickListener {
-                      tryStart(
-                          Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
-                          Intent(Settings.ACTION_MEMORY_CARD_SETTINGS),
-                          Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)
-                      )
+                      tryStart(Intent(Settings.ACTION_INTERNAL_STORAGE_SETTINGS), Intent(Settings.ACTION_MEMORY_CARD_SETTINGS), Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
                   }
                   col.addView(sto, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
 
@@ -1835,18 +1824,12 @@ jobs:
                       gravity = Gravity.CENTER_VERTICAL
                       setPadding(0, dp(6), 0, dp(6))
                       val sz = dp(48)
-                      addView(
-                          ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.FIT_XY },
-                          LinearLayout.LayoutParams(sz, sz)
-                      )
-                      addView(
-                          TextView(this@MainActivity).apply {
-                              textSize = 17f
-                              setTextColor(Color.WHITE)
-                              setPadding(dp(14), 0, 0, 0)
-                          },
-                          LinearLayout.LayoutParams(0, WRAP, 1f)
-                      )
+                      addView(ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.FIT_XY }, LinearLayout.LayoutParams(sz, sz))
+                      addView(TextView(this@MainActivity).apply {
+                          textSize = 17f
+                          setTextColor(Color.WHITE)
+                          setPadding(dp(14), 0, 0, 0)
+                      }, LinearLayout.LayoutParams(0, WRAP, 1f))
                   }
                   val iv = row.getChildAt(0) as ImageView
                   val tv = row.getChildAt(1) as TextView
@@ -1888,10 +1871,7 @@ jobs:
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
                       iv.setOnClickListener { launch(a, iv) }
-                      iv.setOnLongClickListener {
-                          appMenu(a.pkg, Where.LIBRARY)
-                          true
-                      }
+                      iv.setOnLongClickListener { appMenu(a.pkg, Where.LIBRARY); true }
                       return iv
                   }
 
@@ -1951,10 +1931,7 @@ jobs:
                       val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                       r.addView(categoryTile(tiles[i], groups[tiles[i]]!!, tileW))
                       if (i + 1 < tiles.size) {
-                          r.addView(
-                              categoryTile(tiles[i + 1], groups[tiles[i + 1]]!!, tileW),
-                              LinearLayout.LayoutParams(tileW, WRAP).apply { leftMargin = dp(14) }
-                          )
+                          r.addView(categoryTile(tiles[i + 1], groups[tiles[i + 1]]!!, tileW), LinearLayout.LayoutParams(tileW, WRAP).apply { leftMargin = dp(14) })
                       }
                       grid.addView(r)
                   }
@@ -1968,8 +1945,7 @@ jobs:
                       override fun getCount() = shown.size
                       override fun getItem(p: Int): Any = shown[p]
                       override fun getItemId(p: Int) = p.toLong()
-                      override fun getView(p: Int, convert: View?, parent: ViewGroup): View =
-                          appRow(shown[p], Where.LIBRARY, convert)
+                      override fun getView(p: Int, convert: View?, parent: ViewGroup): View = appRow(shown[p], Where.LIBRARY, convert)
                   }
                   list.adapter = adapter
 
@@ -2028,9 +2004,7 @@ jobs:
                           imeOptions = EditorInfo.IME_ACTION_DONE
                       }
                   }
-                  if (folder != null) {
-                      (titleV as EditText).doAfterTextChanged { folder.name = it?.toString().orEmpty() }
-                  }
+                  if (folder != null) (titleV as EditText).doAfterTextChanged { folder.name = it?.toString().orEmpty() }
                   panel.addView(titleV, LinearLayout.LayoutParams(MATCH, WRAP).apply { bottomMargin = dp(8) })
 
                   val sv = ScrollView(this)
@@ -2151,13 +2125,9 @@ jobs:
                           val q = webQuery
                           t.setOnClickListener {
                               try {
-                                  startActivity(
-                                      Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q)))
-                                          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                  )
+                                  startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q))).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                   closeSearch()
-                              } catch (_: Exception) {
-                              }
+                              } catch (_: Exception) {}
                           }
                           return t
                       }
@@ -2167,9 +2137,7 @@ jobs:
                       val q = s?.toString().orEmpty().trim()
                       webQuery = q
                       shown.clear()
-                      if (q.isNotEmpty()) {
-                          shown.addAll(sorted.filter { it.label.contains(q, ignoreCase = true) }.take(12))
-                      }
+                      if (q.isNotEmpty()) shown.addAll(sorted.filter { it.label.contains(q, ignoreCase = true) }.take(12))
                       adapter.notifyDataSetChanged()
                   }
                   et.setOnEditorActionListener { _, id, _ ->
