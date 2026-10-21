@@ -1,2 +1,2 @@
 # iLauncher-apk
-Laucher iPhone para Android . Está constantemente sendo atualizado conforme as necessidades. possíveis bugs estão sendo corrigido pois trata-se de um projeto beta.
+Este é Laucher iPhone para Android e está constantemente sendo atualizado conforme as necessidades. Possíveis bugs estão sendo corrigido pois trata-se de um projeto beta.
