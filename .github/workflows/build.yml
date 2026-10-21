@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 19
-                  versionName = "4.3"
+                  versionCode = 21
+                  versionName = "5.1"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -75,6 +75,7 @@ jobs:
               implementation("androidx.core:core-ktx:1.13.1")
               implementation("androidx.recyclerview:recyclerview:1.3.2")
               implementation("androidx.viewpager2:viewpager2:1.1.0")
+              implementation("androidx.dynamicanimation:dynamicanimation:1.0.0") // Física de mola
           }
           EOF_FILE
           cat > proj/app/src/main/AndroidManifest.xml <<'EOF_FILE'
@@ -84,6 +85,7 @@ jobs:
               android:largeHeap="true">
 
               <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+              <uses-permission android:name="android.permission.VIBRATE" />
 
               <queries>
                   <intent>
@@ -388,6 +390,13 @@ jobs:
                   val p = Paint(Paint.ANTI_ALIAS_FLAG)
                   p.shader = BitmapShader(raw, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
                   oc.drawPath(Icons.squircle(SIZE.toFloat()), p)
+
+                  val stroke = Paint(Paint.ANTI_ALIAS_FLAG)
+                  stroke.style = Paint.Style.STROKE
+                  stroke.strokeWidth = 1.5f
+                  stroke.color = 0x1A000000
+                  oc.drawPath(Icons.squircle(SIZE.toFloat()), stroke)
+
                   return out
               }
 
@@ -409,7 +418,7 @@ jobs:
                       c.restore()
                   } else {
                       c.save()
-                      c.scale(1.2f, 1.2f, 128f, 128f)
+                      c.scale(1.1f, 1.1f, 128f, 128f)
                       b.setBounds(0, 0, 256, 256)
                       b.draw(c)
                       c.restore()
@@ -675,6 +684,9 @@ jobs:
           import androidx.core.view.WindowCompat
           import androidx.core.view.WindowInsetsCompat
           import androidx.core.widget.doAfterTextChanged
+          import androidx.dynamicanimation.animation.DynamicAnimation
+          import androidx.dynamicanimation.animation.SpringAnimation
+          import androidx.dynamicanimation.animation.SpringForce
           import androidx.recyclerview.widget.RecyclerView
           import androidx.viewpager2.widget.ViewPager2
           import java.io.BufferedReader
@@ -876,7 +888,6 @@ jobs:
 
               override fun onResume() {
                   super.onResume()
-                  dismissLaunch(true)
                   refresh()
                   resetAllIconScales()
                   resetDockIcons()
@@ -1166,63 +1177,28 @@ jobs:
                   }
               }
 
-              // ========== ANIMAÇÃO DE ABERTURA FLUIDA ==========
-              private fun launch(a: AppItem, anchor: View?, animated: View? = null) {
-                  resetTouchState(animated ?: anchor)
+              // ========== ABERTURA FLUIDA (TRANSIÇÃO NATIVA) ==========
+              private fun launch(a: AppItem, anchor: View?) {
+                  anchor?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
-                  val opts = ActivityOptions.makeCustomAnimation(
-                      this, android.R.anim.fade_in, android.R.anim.fade_out
-                  ).toBundle()
-                  if (anchor == null || anchor.width == 0 || launchOverlay != null) {
+                  // Usa a animação de expansão nativa do sistema operacional
+                  val opts = if (anchor != null) {
                       try {
-                          startActivity(a.intent, opts)
+                          ActivityOptions.makeScaleUpAnimation(anchor, 0, 0, anchor.width, anchor.height).toBundle()
                       } catch (_: Exception) {
-                          Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                          ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
                       }
-                      return
-                  }
-
-                  val cl = IntArray(2)
-                  content.getLocationOnScreen(cl)
-                  val vl = IntArray(2)
-                  anchor.getLocationOnScreen(vl)
-                  val iv = ImageView(this)
-                  val copy = a.icon.constantState?.newDrawable()?.mutate() ?: a.icon
-                  iv.setImageDrawable(copy)
-                  iv.scaleType = ImageView.ScaleType.FIT_XY
-                  val lp = FrameLayout.LayoutParams(anchor.width, anchor.height)
-                  lp.leftMargin = vl[0] - cl[0] - content.paddingLeft
-                  lp.topMargin = vl[1] - cl[1] - content.paddingTop
-                  content.addView(iv, lp)
-                  launchOverlay = iv
-                  
-                  val big = resources.displayMetrics.widthPixels * 1.15f / anchor.width
-                  iv.animate().scaleX(big).scaleY(big).setDuration(240)
-                      .setInterpolator(DecelerateInterpolator(1.3f))
-                      .start()
-                      
-                  iv.postDelayed({
-                      try {
-                          startActivity(a.intent, opts)
-                      } catch (_: Exception) {
-                          Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
-                          dismissLaunch(false)
-                      }
-                  }, 90)
-                  iv.postDelayed({ if (launchOverlay === iv) dismissLaunch(true) }, 3000)
-              }
-
-              private fun dismissLaunch(animate: Boolean) {
-                  val iv = launchOverlay ?: return
-                  launchOverlay = null
-                  if (animate) {
-                      iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(280)
-                          .setInterpolator(DecelerateInterpolator())
-                          .withEndAction { content.removeView(iv) }
-                          .start()
                   } else {
-                      content.removeView(iv)
+                      ActivityOptions.makeCustomAnimation(this, android.R.anim.fade_in, android.R.anim.fade_out).toBundle()
                   }
+
+                  try {
+                      startActivity(a.intent, opts)
+                  } catch (_: Exception) {
+                      Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                  }
+                  if (searchOverlay != null) closeSearch()
+                  if (groupOverlay != null) closeGroup()
               }
 
               private fun setEditing(on: Boolean) {
@@ -1281,19 +1257,26 @@ jobs:
                   }
               }
 
-              // Efeito elástico de toque
+              // Efeito de mola super fluido (SpringAnimation)
               private fun pressable(v: View) {
                   v.setOnTouchListener { view, ev ->
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
-                              view.animate().scaleX(0.88f).scaleY(0.88f).setDuration(90)
+                              view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100)
                                   .setInterpolator(DecelerateInterpolator()).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                               view.animate().cancel()
-                              view.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                                  .setInterpolator(OvershootInterpolator(2.5f)).start()
+                              // Física de mola nativa do iOS
+                              val springX = SpringAnimation(view, DynamicAnimation.SCALE_X, 1f)
+                              val springY = SpringAnimation(view, DynamicAnimation.SCALE_Y, 1f)
+                              springX.spring.stiffness = SpringForce.STIFFNESS_MEDIUM
+                              springX.spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
+                              springY.spring.stiffness = SpringForce.STIFFNESS_MEDIUM
+                              springY.spring.dampingRatio = SpringForce.DAMPING_RATIO_MEDIUM_BOUNCY
+                              springX.start()
+                              springY.start()
                           }
                       }
                       false
@@ -1323,7 +1306,6 @@ jobs:
                   return box
               }
 
-              // Efeito de tremelique (Wiggle) no modo edição
               private fun wiggle(v: View) {
                   val a = ObjectAnimator.ofFloat(v, View.ROTATION, -2.2f, 2.2f).apply {
                       duration = 100L + (Math.random() * 40).toLong()
@@ -1403,7 +1385,7 @@ jobs:
                   col.setOnClickListener { v ->
                       if (!editing) {
                           when (e) {
-                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder, col) }
+                              is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
                               is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e)
                           }
                       }
@@ -1573,7 +1555,7 @@ jobs:
                       
                       pressable(iv)
                       
-                      iv.setOnClickListener { launch(a, iv, iv) }
+                      iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                           appMenu(a.pkg, Where.DOCK)
@@ -1959,7 +1941,7 @@ jobs:
                   val copy = a.icon.constantState?.newDrawable()?.mutate() ?: a.icon
                   iv.setImageDrawable(copy)
                   tv.text = a.label
-                  row.setOnClickListener { launch(a, row, row) }
+                  row.setOnClickListener { launch(a, row) }
                   row.setOnLongClickListener {
                       appMenu(a.pkg, where)
                       true
@@ -1993,7 +1975,7 @@ jobs:
                       }
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
-                      iv.setOnClickListener { launch(a, iv, iv) }
+                      iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           appMenu(a.pkg, Where.LIBRARY)
                           true
@@ -2156,7 +2138,7 @@ jobs:
                               val iv = roundIcon(a.icon, iconPx)
                               cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
                               cell.addView(labelView(a.label), LinearLayout.LayoutParams(MATCH, WRAP))
-                              cell.setOnClickListener { launch(a, iv, cell) }
+                              cell.setOnClickListener { launch(a, iv) }
                               cell.setOnLongClickListener {
                                   it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                                   appMenu(a.pkg, if (folder != null) Where.FOLDER else Where.LIBRARY, folder)
