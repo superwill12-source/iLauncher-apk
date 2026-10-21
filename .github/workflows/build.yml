@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 21
-                  versionName = "5.1"
+                  versionCode = 22
+                  versionName = "5.2"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -75,7 +75,7 @@ jobs:
               implementation("androidx.core:core-ktx:1.13.1")
               implementation("androidx.recyclerview:recyclerview:1.3.2")
               implementation("androidx.viewpager2:viewpager2:1.1.0")
-              implementation("androidx.dynamicanimation:dynamicanimation:1.0.0") // Física de mola
+              implementation("androidx.dynamicanimation:dynamicanimation:1.0.0")
           }
           EOF_FILE
           cat > proj/app/src/main/AndroidManifest.xml <<'EOF_FILE'
@@ -651,7 +651,6 @@ jobs:
           import android.os.Bundle
           import android.os.Environment
           import android.os.Handler
-          import android.os.HardwarePropertiesManager
           import android.os.Looper
           import android.os.StatFs
           import android.provider.AlarmClock
@@ -666,8 +665,6 @@ jobs:
           import android.view.MotionEvent
           import android.view.View
           import android.view.ViewGroup
-          import android.view.animation.DecelerateInterpolator
-          import android.view.animation.OvershootInterpolator
           import android.view.inputmethod.EditorInfo
           import android.view.inputmethod.InputMethodManager
           import android.widget.BaseAdapter
@@ -689,9 +686,6 @@ jobs:
           import androidx.dynamicanimation.animation.SpringForce
           import androidx.recyclerview.widget.RecyclerView
           import androidx.viewpager2.widget.ViewPager2
-          import java.io.BufferedReader
-          import java.io.File
-          import java.io.InputStreamReader
           import java.util.Date
           import java.util.Locale
 
@@ -792,8 +786,8 @@ jobs:
                   pager = ViewPager2(this)
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
+                  pager.offscreenPageLimit = 1
                   
-                  // Efeito de transição fluido entre as páginas
                   pager.setPageTransformer { page, position ->
                       val a = Math.min(Math.abs(position), 1f)
                       val sc = 1f - 0.06f * a
@@ -1177,11 +1171,10 @@ jobs:
                   }
               }
 
-              // ========== ABERTURA FLUIDA (TRANSIÇÃO NATIVA) ==========
+              // ========== ABERTURA ULTRA RÁPIDA ==========
               private fun launch(a: AppItem, anchor: View?) {
                   anchor?.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
-                  // Usa a animação de expansão nativa do sistema operacional
                   val opts = if (anchor != null) {
                       try {
                           ActivityOptions.makeScaleUpAnimation(anchor, 0, 0, anchor.width, anchor.height).toBundle()
@@ -1264,11 +1257,10 @@ jobs:
                           MotionEvent.ACTION_DOWN -> {
                               view.animate().cancel()
                               view.animate().scaleX(0.85f).scaleY(0.85f).setDuration(100)
-                                  .setInterpolator(DecelerateInterpolator()).start()
+                                  .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
                           }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                               view.animate().cancel()
-                              // Física de mola nativa do iOS
                               val springX = SpringAnimation(view, DynamicAnimation.SCALE_X, 1f)
                               val springY = SpringAnimation(view, DynamicAnimation.SCALE_Y, 1f)
                               springX.spring.stiffness = SpringForce.STIFFNESS_MEDIUM
@@ -1627,6 +1619,7 @@ jobs:
                   }
               }
 
+              // Apenas a temperatura da bateria (100% confiável)
               private fun readBatteryTemp(): Float? {
                   try {
                       val intent = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -1636,83 +1629,18 @@ jobs:
                   return null
               }
 
-              private fun readCpuTempHpm(): Float? {
-                  try {
-                      val hpm = getSystemService(Context.HARDWARE_PROPERTIES_SERVICE) as? HardwarePropertiesManager ?: return null
-                      val temps = hpm.getDeviceTemperatures(HardwarePropertiesManager.DEVICE_TEMPERATURE_CPU, HardwarePropertiesManager.TEMPERATURE_CURRENT)
-                      if (temps != null && temps.isNotEmpty()) {
-                          val valid = temps.filter { it in 10f..105f }
-                          if (valid.isNotEmpty()) return valid.maxOrNull()
-                      }
-                  } catch (_: Exception) {}
-                  return null
-              }
-
-              private fun readCpuTempSysfs(): Float? {
-                  try {
-                      val dir = File("/sys/class/thermal")
-                      val zones = dir.listFiles() ?: return null
-                      var maxTemp = -1f
-                      for (z in zones) {
-                          if (!z.name.startsWith("thermal_zone")) continue
-                          try {
-                              val typeF = File(z, "type")
-                              val tempF = File(z, "temp")
-                              if (!typeF.exists() || !tempF.exists()) continue
-                              val type = typeF.readText().trim().lowercase()
-                              if (!type.contains("cpu") && !type.contains("soc") && !type.contains("tsens")) continue
-                              
-                              val raw = tempF.readText().trim().toLongOrNull() ?: continue
-                              var celsius = if (raw > 1000) raw / 1000f else raw.toFloat()
-                              if (celsius > 105f && celsius < 212f) celsius = (celsius - 32f) * 5f / 9f
-                              
-                              if (celsius in 10f..105f) {
-                                  if (celsius > maxTemp) maxTemp = celsius
-                              }
-                          } catch (_: Exception) {}
-                      }
-                      if (maxTemp > 0) return maxTemp
-                  } catch (_: Exception) {}
-                  return null
-              }
-
-              private fun readCurrentCpuFreq(): String {
-                  try {
-                      var maxFreq = 0
-                      val cores = Runtime.getRuntime().availableProcessors()
-                      for (i in 0 until cores) {
-                          val f = File("/sys/devices/system/cpu/cpu$i/cpufreq/scaling_cur_freq")
-                          if (f.canRead()) {
-                              val khz = f.readText().trim().toLongOrNull() ?: continue
-                              if (khz > maxFreq) maxFreq = khz.toInt()
-                          }
-                      }
-                      if (maxFreq > 0) {
-                          if (maxFreq >= 1000000) return "%.2f GHz".format(maxFreq / 1000000f)
-                          return "${maxFreq / 1000} MHz"
-                      }
-                  } catch (_: Exception) {}
-                  return "—"
-              }
-
-              private fun buildCpuCard(): View {
+              private fun buildTempCard(): View {
                   val card = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       background = rounded(0x99000000.toInt(), dp(22))
                       setPadding(dp(16), dp(14), dp(16), dp(14))
                   }
-                  card.addView(tv("CPU e Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
+                  card.addView(tv("Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
                   
-                  val freqView = tv("—", 40f, Color.WHITE).apply {
+                  val tempView = tv("—", 40f, Color.WHITE).apply {
                       typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                   }
-                  card.addView(freqView)
-                  
-                  val tempView = tv("CPU: —", 12f, 0xFFBBBBBB.toInt())
                   card.addView(tempView)
-                  
-                  val batTempView = tv("Bateria: —", 11f, 0xFFBBBBBB.toInt())
-                  card.addView(batTempView, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(2) })
 
                   card.setOnClickListener {
                       tryStart(Intent(Settings.ACTION_DEVICE_INFO_SETTINGS))
@@ -1728,29 +1656,16 @@ jobs:
                               return
                           }
                           try {
-                              freqView.text = readCurrentCpuFreq()
-                              
-                              var cpuTemp = readCpuTempHpm()
-                              if (cpuTemp == null) cpuTemp = readCpuTempSysfs()
-                              
-                              if (cpuTemp != null) {
-                                  tempView.text = "CPU: %.1f°C".format(cpuTemp)
-                                  tempView.setTextColor(if (cpuTemp > 80f) 0xFFFF3B30.toInt() else 0xFFBBBBBB.toInt())
-                              } else {
-                                  tempView.text = "CPU: —"
-                                  tempView.setTextColor(0xFFBBBBBB.toInt())
-                              }
-                              
                               val batTemp = readBatteryTemp()
                               if (batTemp != null) {
-                                  batTempView.text = "Bateria: %.1f°C".format(batTemp)
+                                  tempView.text = "%.1f°C".format(batTemp)
+                                  tempView.setTextColor(if (batTemp > 45f) 0xFFFF3B30.toInt() else Color.WHITE)
                               } else {
-                                  batTempView.text = "Bateria: —"
+                                  tempView.text = "—"
                               }
-                              
                           } catch (_: Exception) {
                           }
-                          handler.postDelayed(this, 2000L)
+                          handler.postDelayed(this, 3000L)
                       }
                   }
                   card.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
@@ -1897,7 +1812,7 @@ jobs:
                   }
                   col.addView(sto, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
 
-                  col.addView(buildCpuCard(), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
+                  col.addView(buildTempCard(), LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
 
                   return sv
               }
@@ -2178,7 +2093,7 @@ jobs:
                   panel.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                   ov.animate().alpha(1f).setDuration(180).start()
                   panel.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                      .setInterpolator(OvershootInterpolator(1.1f))
+                      .setInterpolator(android.view.animation.OvershootInterpolator(1.1f))
                       .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
                       .start()
               }
