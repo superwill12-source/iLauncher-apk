@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 17
-                  versionName = "4.1"
+                  versionCode = 18
+                  versionName = "4.2"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -336,15 +336,12 @@ jobs:
               @Deprecated("Deprecated in Java")
               override fun getOpacity() = PixelFormat.TRANSLUCENT
 
-              // ---- SOLUÇÃO PARA O COMPARTILHAMENTO DE DRAWABLE ----
-              // Garante que cada ImageView tenha sua própria instância do ícone
               override fun getConstantState(): ConstantState {
                   return object : ConstantState() {
                       override fun newDrawable(): Drawable = IosIcon(kind, base)
                       override fun getChangingConfigurations(): Int = 0
                   }
               }
-              // ----------------------------------------------------
 
               private fun k(v: Long): Int = v.toInt()
 
@@ -751,6 +748,15 @@ jobs:
                       setColor(color)
                   }
 
+              // Efeito de "vidro fosco" para o Dock
+              private fun glassBackground(): GradientDrawable =
+                  GradientDrawable().apply {
+                      shape = GradientDrawable.RECTANGLE
+                      cornerRadius = dp(36).toFloat()
+                      colors = intArrayOf(0x80FFFFFF.toInt(), 0x40FFFFFF) // Gradiente translúcido
+                      setStroke(dp(1), 0x50FFFFFF) // Borda fina de vidro
+                  }
+
               // ================= Ciclo de vida =================
 
               override fun onCreate(savedInstanceState: Bundle?) {
@@ -798,14 +804,16 @@ jobs:
                       bottomMargin = dp(10)
                   })
 
+                  // Configuração do Dock com efeito de vidro e sombra
                   dock = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER
                       setPadding(dp(16), dp(12), dp(16), dp(12))
-                      background = rounded(0x55FFFFFF, dp(34))
+                      background = glassBackground()
+                      elevation = dp(8).toFloat() // Sombra para dar profundidade
                   }
                   column.addView(dock, LinearLayout.LayoutParams(MATCH, WRAP).apply {
-                      setMargins(dp(10), 0, dp(10), dp(8))
+                      setMargins(dp(10), 0, dp(10), dp(12))
                   })
 
                   content.addView(column, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -1173,6 +1181,23 @@ jobs:
                   }
               }
 
+              // Efeito de fluidez de toque SEGURO: mexe apenas no alpha, nunca na escala
+              private fun pressable(v: View) {
+                  v.setOnTouchListener { view, ev ->
+                      when (ev.actionMasked) {
+                          MotionEvent.ACTION_DOWN -> {
+                              view.animate().cancel()
+                              view.animate().alpha(0.6f).setDuration(100).start()
+                          }
+                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                              view.animate().cancel()
+                              view.animate().alpha(1f).setDuration(200).start()
+                          }
+                      }
+                      false
+                  }
+              }
+
               private fun folderIconView(f: Entry.Folder): View {
                   val box = FrameLayout(this)
                   box.background = rounded(0x66FFFFFF, (iconPx * 0.225f).toInt())
@@ -1418,6 +1443,10 @@ jobs:
                       frame.layoutParams = LinearLayout.LayoutParams(0, WRAP, 1f)
 
                       val iv = roundIcon(a.icon, dockIconSize)
+                      
+                      // Aplica o efeito de fluidez seguro
+                      pressable(iv)
+                      
                       iv.setOnClickListener { launch(a, iv) }
                       iv.setOnLongClickListener {
                           it.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
