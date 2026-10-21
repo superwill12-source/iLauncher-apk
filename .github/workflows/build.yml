@@ -61,8 +61,8 @@ jobs:
                   applicationId = "com.ioslauncher"
                   minSdk = 26
                   targetSdk = 34
-                  versionCode = 25
-                  versionName = "6.1"
+                  versionCode = 26
+                  versionName = "6.2"
               }
               compileOptions {
                   sourceCompatibility = JavaVersion.VERSION_17
@@ -763,6 +763,37 @@ jobs:
                       v.setPadding(0, sys.top, 0, sys.bottom)
                       insets
                   }
+                  
+                  // Listener global de arrastar para virar a página e gerenciar o Swipe
+                  content.setOnDragListener { v, ev ->
+                      when (ev.action) {
+                          DragEvent.ACTION_DRAG_STARTED -> {
+                              pager.isUserInputEnabled = false
+                              true
+                          }
+                          DragEvent.ACTION_DRAG_LOCATION -> {
+                              val now = System.currentTimeMillis()
+                              if (now - lastFlip > 800) {
+                                  val x = ev.x
+                                  val w = v.width
+                                  val cur = pager.currentItem
+                                  if (x < dp(50) && cur > 0) {
+                                      pager.setCurrentItem(cur - 1, true)
+                                      lastFlip = now
+                                  } else if (x > w - dp(50) && cur < homePages.size + 1) {
+                                      pager.setCurrentItem(cur + 1, true)
+                                      lastFlip = now
+                                  }
+                              }
+                              true
+                          }
+                          DragEvent.ACTION_DRAG_ENDED -> {
+                              pager.isUserInputEnabled = true
+                              true
+                          }
+                          else -> true
+                      }
+                  }
 
                   val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
@@ -1453,24 +1484,8 @@ jobs:
                   dragEntry = e
                   dragSource = v
                   v.alpha = 0.3f
+                  pager.isUserInputEnabled = false
                   v.startDragAndDrop(ClipData.newPlainText("e", "e"), View.DragShadowBuilder(v), null, 0)
-              }
-
-              private fun maybeFlip(v: View, ev: DragEvent) {
-                  val now = System.currentTimeMillis()
-                  if (now - lastFlip < 800) return
-                  val loc = IntArray(2)
-                  v.getLocationOnScreen(loc)
-                  val x = loc[0] + ev.x
-                  val w = resources.displayMetrics.widthPixels
-                  val cur = pager.currentItem
-                  if (x < dp(28) && cur > 1) {
-                      pager.setCurrentItem(cur - 1, true)
-                      lastFlip = now
-                  } else if (x > w - dp(28) && cur < homePages.size) {
-                      pager.setCurrentItem(cur + 1, true)
-                      lastFlip = now
-                  }
               }
 
               private fun dockDragListener(): View.OnDragListener {
@@ -1498,7 +1513,6 @@ jobs:
                       when (ev.action) {
                           DragEvent.ACTION_DRAG_STARTED -> dragEntry != null
                           DragEvent.ACTION_DRAG_LOCATION -> {
-                              maybeFlip(v, ev)
                               true
                           }
                           DragEvent.ACTION_DROP -> {
@@ -1529,16 +1543,43 @@ jobs:
               }
 
               private fun handleDrop(d: Entry?, target: Entry?, zone: Int, hp: Int) {
-                  if (d == null || d === target) {
-                      rebuild()
-                      return
-                  }
-                  val per = cols * rows
+                  if (d == null) return
+                  if (d === target) { rebuild(); return }
+                  
                   val dIdx = home.indexOfFirst { it === d }
-                  if (dIdx < 0) {
-                      rebuild()
+                  val isNewApp = dIdx < 0 && d is Entry.App
+                  
+                  if (isNewApp) {
+                      val pkg = (d as Entry.App).pkg
+                      val alreadyInHome = home.any { (it is Entry.App && it.pkg == pkg) || (it is Entry.Folder && pkg in it.pkgs) }
+                      if (alreadyInHome) {
+                          Toast.makeText(this, "App já está na tela", Toast.LENGTH_SHORT).show()
+                          rebuild()
+                          return
+                      }
+                      if (target == null) {
+                          home.add(d)
+                      } else {
+                          val tIdx = home.indexOfFirst { it === target }
+                          if (tIdx >= 0) {
+                              if (zone == 0 && target is Entry.App) {
+                                  home[tIdx] = Entry.Folder("Pasta", mutableListOf(target.pkg, pkg))
+                              } else if (zone == 0 && target is Entry.Folder) {
+                                  target.pkgs.add(pkg)
+                              } else {
+                                  home.add(if (zone < 0) tIdx else tIdx + 1, d)
+                              }
+                          }
+                      }
+                      hidden.remove(pkg)
+                      dockPkgs.remove(pkg)
+                      commit()
                       return
                   }
+
+                  if (dIdx < 0) { rebuild(); return }
+                  val per = cols * rows
+                  
                   if (target == null) {
                       var tIdx = Math.min(home.size, (hp + 1) * per)
                       home.removeAt(dIdx)
@@ -1546,10 +1587,7 @@ jobs:
                       home.add(tIdx.coerceIn(0, home.size), d)
                   } else {
                       val tIdx = home.indexOfFirst { it === target }
-                      if (tIdx < 0) {
-                          rebuild()
-                          return
-                      }
+                      if (tIdx < 0) { rebuild(); return }
                       if (zone == 0 && d is Entry.App && target is Entry.App) {
                           home[tIdx] = Entry.Folder("Pasta", mutableListOf(target.pkg, d.pkg))
                           home.removeAt(dIdx)
@@ -1589,7 +1627,8 @@ jobs:
                                   )
                               )
                           }
-                          if (editing) slot.setOnDragListener(slotListener(e, hp))
+                          // Sempre ativo para permitir arrastar da biblioteca
+                          slot.setOnDragListener(slotListener(e, hp))
                           row.addView(slot, LinearLayout.LayoutParams(0, MATCH, 1f))
                       }
                   }
@@ -1879,23 +1918,40 @@ jobs:
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER_VERTICAL
                       setPadding(0, dp(6), 0, dp(6))
-                      val sz = dp(48)
-                      addView(ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.FIT_XY }, LinearLayout.LayoutParams(sz, sz))
+                      // Icon
+                      addView(ImageView(this@MainActivity).apply { scaleType = ImageView.ScaleType.FIT_XY }, LinearLayout.LayoutParams(dp(48), dp(48)))
+                      // Text
                       addView(TextView(this@MainActivity).apply {
                           textSize = 17f
                           setTextColor(Color.WHITE)
-                          setPadding(dp(14), 0, 0, 0)
+                          setPadding(dp(14), 0, dp(14), 0)
                       }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                      // Add Button
+                      addView(TextView(this@MainActivity).apply {
+                          text = "+"
+                          textSize = 24f
+                          gravity = Gravity.CENTER
+                          setTextColor(Color.WHITE)
+                          background = rounded(0x44FFFFFF, dp(16))
+                          setPadding(dp(10), 0, dp(10), 0)
+                      }, LinearLayout.LayoutParams(WRAP, WRAP))
                   }
                   val iv = row.getChildAt(0) as ImageView
                   val tv = row.getChildAt(1) as TextView
+                  val addBtn = row.getChildAt(2) as TextView
+
                   val copy = a.icon.constantState?.newDrawable()?.mutate() ?: a.icon
                   iv.setImageDrawable(copy)
                   tv.text = a.label
+
                   row.setOnClickListener { launch(a, row) }
-                  row.setOnLongClickListener {
-                      appMenu(a.pkg, where)
-                      true
+                  row.setOnLongClickListener { 
+                      startDrag(row, Entry.App(a.pkg))
+                      true 
+                  }
+                  addBtn.setOnClickListener {
+                      addToHome(a.pkg)
+                      Toast.makeText(this, "${a.label} adicionado à tela de início", Toast.LENGTH_SHORT).show()
                   }
                   return row
               }
@@ -1927,7 +1983,10 @@ jobs:
                       val a = list.getOrNull(i) ?: return View(this)
                       val iv = roundIcon(a.icon, mini)
                       iv.setOnClickListener { launch(a, iv) }
-                      iv.setOnLongClickListener { appMenu(a.pkg, Where.LIBRARY); true }
+                      iv.setOnLongClickListener { 
+                          startDrag(iv, Entry.App(a.pkg))
+                          true 
+                      }
                       return iv
                   }
 
