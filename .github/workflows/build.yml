@@ -254,6 +254,8 @@ jobs:
                   "dots" to true,
                   "pill" to true,
                   "pillStyle" to "ios",
+                  "panelStyle" to "ios",
+                  "dockRadius" to 34,
                   "today" to true,
                   "library" to true,
                   "swipeSearch" to true,
@@ -264,13 +266,16 @@ jobs:
                   "haptics" to true,
                   "animLaunch" to true,
                   "animPress" to true,
-                  "animPage" to true,
+                  "animPage" to false,
+                  "animStyle" to "ios",
                   "dim" to 0,
                   "gear" to true,
                   "wClock" to true,
                   "wCal" to true,
                   "wBat" to true,
-                  "wSto" to true
+                  "wSto" to true,
+                  "wTemp" to true,
+                  "wLinks" to true
               )
 
               fun init(ctx: Context) {
@@ -295,11 +300,13 @@ jobs:
                   val over: Map<String, Any> = when (name) {
                       "ios_dark" -> mapOf("tint" to "dark", "dockAlpha" to 45, "dim" to 15)
                       "oneui" -> mapOf(
-                          "iconSet" to "oneui", "iconSize" to 76, "cols" to 5, "rows" to 6,
-                          "labelSize" to 12, "dockMax" to 5, "dockAlpha" to 25,
-                          "pillStyle" to "bar", "library" to false, "drawerGesture" to true,
+                          "iconSet" to "original", "shape" to "squircle", "iconSize" to 78,
+                          "cols" to 5, "rows" to 6, "labelSize" to 12,
+                          "dockMax" to 5, "dockAlpha" to 22, "dockRadius" to 28,
+                          "pillStyle" to "bar", "panelStyle" to "oneui",
+                          "library" to false, "drawerGesture" to true, "animStyle" to "oneui",
                           "folderStyle" to "grid2", "wiggle" to false, "swipeSearch" to false,
-                          "animPage" to false, "animPress" to false
+                          "animPage" to false, "animPress" to true, "gear" to false
                       )
                       "classic" -> mapOf(
                           "iconSet" to "original", "shape" to "circle", "iconSize" to 64, "cols" to 5,
@@ -324,6 +331,66 @@ jobs:
                   }
                   e.putString("skin", name)
                   e.apply()
+              }
+          }
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/Gauge.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.Paint
+          import android.graphics.RectF
+          import android.graphics.Typeface
+          import android.view.View
+
+          class GaugeView(ctx: Context) : View(ctx) {
+              var value = 0f
+              var minV = 15f
+              var maxV = 55f
+              var title = ""
+
+              private val track = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val arc = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val txt = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val sub = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val rect = RectF()
+
+              init {
+                  track.style = Paint.Style.STROKE
+                  track.strokeCap = Paint.Cap.ROUND
+                  track.color = 0x33FFFFFF
+                  arc.style = Paint.Style.STROKE
+                  arc.strokeCap = Paint.Cap.ROUND
+                  txt.color = Color.WHITE
+                  txt.textAlign = Paint.Align.CENTER
+                  txt.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                  sub.color = 0xFFBBBBBB.toInt()
+                  sub.textAlign = Paint.Align.CENTER
+              }
+
+              override fun onDraw(c: Canvas) {
+                  val s = Math.min(width, height).toFloat()
+                  val stroke = s * 0.09f
+                  val ox = (width - s) / 2f
+                  val oy = (height - s) / 2f
+                  track.strokeWidth = stroke
+                  arc.strokeWidth = stroke
+                  rect.set(ox + stroke, oy + stroke, ox + s - stroke, oy + s - stroke)
+                  c.drawArc(rect, 150f, 240f, false, track)
+                  val f = ((value - minV) / (maxV - minV)).coerceIn(0.02f, 1f)
+                  arc.color = when {
+                      f < 0.45f -> 0xFF34C759.toInt()
+                      f < 0.7f -> 0xFFFF9F0A.toInt()
+                      else -> 0xFFFF3B30.toInt()
+                  }
+                  c.drawArc(rect, 150f, 240f * f, false, arc)
+                  txt.textSize = s * 0.28f
+                  val cy = oy + s / 2f
+                  c.drawText("${value.toInt()}°", width / 2f, cy + txt.textSize * 0.28f, txt)
+                  sub.textSize = s * 0.11f
+                  c.drawText(title, width / 2f, oy + s - stroke * 0.9f, sub)
               }
           }
           EOF_FILE
@@ -522,21 +589,79 @@ jobs:
               private fun wrap(c: Canvas) {
                   gradient(c, k(0xFFFFFFFF), k(0xFFE9E9EE))
                   val b = base
+                  val fit = iconSet == "ios"
                   if (b is AdaptiveIconDrawable) {
-                      val big = 384
-                      val off = (256 - big) / 2
                       b.background?.let {
-                          it.setBounds(off, off, off + big, off + big)
+                          it.setBounds(-64, -64, 320, 320)
                           it.draw(c)
                       }
-                      b.foreground?.let {
-                          it.setBounds(off, off, off + big, off + big)
-                          it.draw(c)
+                      val fg = b.foreground
+                      if (fg != null) {
+                          if (fit) {
+                              drawFitted(c, fg, true)
+                          } else {
+                              fg.setBounds(-64, -64, 320, 320)
+                              fg.draw(c)
+                          }
                       }
                   } else {
-                      b.setBounds(34, 34, 222, 222)
-                      b.draw(c)
+                      if (fit) {
+                          drawFitted(c, b, false)
+                      } else {
+                          b.setBounds(14, 14, 242, 242)
+                          b.draw(c)
+                      }
                   }
+              }
+
+              // Mede o desenho e o amplia para preencher o ícone (evita ícones pequenos)
+              private fun drawFitted(c: Canvas, d: Drawable, adaptive: Boolean) {
+                  val m = 200
+                  val extra = (m * 0.25f).toInt()
+                  val lo = if (adaptive) -extra else 0
+                  val hi = if (adaptive) m + extra else m
+                  val tmp = Bitmap.createBitmap(m, m, Bitmap.Config.ARGB_8888)
+                  val tc = Canvas(tmp)
+                  d.setBounds(lo, lo, hi, hi)
+                  d.draw(tc)
+                  val px = IntArray(m * m)
+                  tmp.getPixels(px, 0, m, 0, 0, m, m)
+                  tmp.recycle()
+                  var minX = m
+                  var minY = m
+                  var maxX = -1
+                  var maxY = -1
+                  for (y in 0 until m) {
+                      val row = y * m
+                      for (x in 0 until m) {
+                          if ((px[row + x] ushr 24) > 40) {
+                              if (x < minX) minX = x
+                              if (x > maxX) maxX = x
+                              if (y < minY) minY = y
+                              if (y > maxY) maxY = y
+                          }
+                      }
+                  }
+                  val lo256 = if (adaptive) -64 else 0
+                  val hi256 = if (adaptive) 320 else 256
+                  val w = maxX - minX + 1
+                  val h = maxY - minY + 1
+                  if (maxX < 0 || (w >= m * 0.94f && h >= m * 0.94f)) {
+                      d.setBounds(lo256, lo256, hi256, hi256)
+                      d.draw(c)
+                      return
+                  }
+                  val k = 256f / m
+                  val cx = (minX + maxX + 1) / 2f * k
+                  val cy = (minY + maxY + 1) / 2f * k
+                  val s = (0.84f * 256f / (Math.max(w, h) * k)).coerceIn(0.5f, 2.6f)
+                  c.save()
+                  c.translate(128f, 128f)
+                  c.scale(s, s)
+                  c.translate(-cx, -cy)
+                  d.setBounds(lo256, lo256, hi256, hi256)
+                  d.draw(c)
+                  c.restore()
               }
 
               // ---------- ícones estilo iOS ----------
@@ -770,7 +895,11 @@ jobs:
           import android.provider.MediaStore
           import android.provider.Settings
           import android.text.InputType
+          import android.text.SpannableStringBuilder
+          import android.text.Spanned
           import android.text.TextUtils
+          import android.text.style.ForegroundColorSpan
+          import android.text.style.StyleSpan
           import android.view.DragEvent
           import android.view.GestureDetector
           import android.view.Gravity
@@ -781,6 +910,7 @@ jobs:
           import android.view.ViewOutlineProvider
           import android.view.animation.DecelerateInterpolator
           import android.view.animation.OvershootInterpolator
+          import android.view.animation.PathInterpolator
           import android.view.inputmethod.EditorInfo
           import android.view.inputmethod.InputMethodManager
           import android.widget.BaseAdapter
@@ -868,6 +998,8 @@ jobs:
               private var drawerOverlay: View? = null
               private var drawerScroll: ScrollView? = null
               private lateinit var gearBtn: TextView
+              private lateinit var column: LinearLayout
+              private val springOut = PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
               private val iconPx get() = (resources.displayMetrics.widthPixels / COLS * Cfg.i("iconSize") / 100f).toInt()
@@ -894,7 +1026,7 @@ jobs:
                       insets
                   }
 
-                  val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
                   pager = ViewPager2(this)
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
@@ -910,6 +1042,7 @@ jobs:
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
                           updatePill()
+                          updateGear()
                       }
 
                       override fun onPageScrollStateChanged(state: Int) {
@@ -1310,10 +1443,13 @@ jobs:
                   content.addView(iv, lp)
                   launchOverlay = iv
                   val big = resources.displayMetrics.widthPixels * 1.15f / v.width
-                  iv.animate().scaleX(big).scaleY(big).setDuration(240)
-                      .setInterpolator(DecelerateInterpolator(1.3f))
+                  iv.animate().scaleX(big).scaleY(big).setDuration(380)
+                      .setInterpolator(springOut)
                       .start()
-                  iv.postDelayed({ startApp(a, opts) }, 90)
+                  val homeScale = if (Cfg.s("animStyle") == "ios") 1.18f else 1.04f
+                  column.animate().scaleX(homeScale).scaleY(homeScale).alpha(0f).setDuration(320)
+                      .setInterpolator(springOut).start()
+                  iv.postDelayed({ startApp(a, opts) }, 120)
                   iv.postDelayed({ if (launchOverlay === iv) dismissLaunch(true) }, 3000)
               }
 
@@ -1321,11 +1457,17 @@ jobs:
                   val iv = launchOverlay ?: return
                   launchOverlay = null
                   if (animate) {
-                      iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(280)
-                          .setInterpolator(DecelerateInterpolator())
+                      column.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(340)
+                          .setInterpolator(springOut).start()
+                      iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(320)
+                          .setInterpolator(springOut)
                           .withEndAction { content.removeView(iv) }
                           .start()
                   } else {
+                      column.animate().cancel()
+                      column.scaleX = 1f
+                      column.scaleY = 1f
+                      column.alpha = 1f
                       content.removeView(iv)
                   }
               }
@@ -1392,10 +1534,17 @@ jobs:
                       if (!Cfg.b("animPress")) return@setOnTouchListener false
                       when (ev.actionMasked) {
                           MotionEvent.ACTION_DOWN ->
-                              view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90).setInterpolator(DecelerateInterpolator()).start()
+                              if (Cfg.s("animStyle") == "ios") {
+                                  view.animate().alpha(0.72f).scaleX(0.97f).scaleY(0.97f).setDuration(80)
+                                      .setInterpolator(DecelerateInterpolator()).start()
+                              } else {
+                                  view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(90)
+                                      .setInterpolator(DecelerateInterpolator()).start()
+                              }
                           MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                              view.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                                  .setInterpolator(OvershootInterpolator(2.5f)).start()
+                              view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(280)
+                                  .setInterpolator(if (Cfg.s("animStyle") == "ios") springOut else OvershootInterpolator(2.5f))
+                                  .start()
                       }
                       false
                   }
@@ -1505,7 +1654,7 @@ jobs:
                       if (!editing) {
                           when (e) {
                               is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
-                              is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e)
+                              is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e, holder)
                           }
                       }
                   }
@@ -1629,6 +1778,13 @@ jobs:
                       setPadding(dp(8), dp(8), dp(8), 0)
                   }
                   val items = homePages.getOrNull(hp) ?: emptyList()
+                  if (!editing) {
+                      root.setOnLongClickListener {
+                          haptic(it)
+                          openHomeMenu()
+                          true
+                      }
+                  }
                   for (r in 0 until rows) {
                       val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                       root.addView(row, LinearLayout.LayoutParams(MATCH, 0, 1f))
@@ -1803,6 +1959,82 @@ jobs:
                       leftMargin = if (row.childCount > 0) gap else 0
                   })
                   if (row.childCount > 0) col.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(16) })
+
+                  // Atalhos para as configurações
+                  if (Cfg.b("wLinks")) {
+                      val links = listOf(
+                          Triple("📶", "Wi-Fi", Settings.ACTION_WIFI_SETTINGS),
+                          Triple("🔵", "Bluetooth", Settings.ACTION_BLUETOOTH_SETTINGS),
+                          Triple("🔊", "Som", Settings.ACTION_SOUND_SETTINGS),
+                          Triple("☀️", "Tela", Settings.ACTION_DISPLAY_SETTINGS),
+                          Triple("🔋", "Bateria", Intent.ACTION_POWER_USAGE_SUMMARY),
+                          Triple("💾", "Armazenamento", Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
+                          Triple("📱", "Apps", Settings.ACTION_APPLICATION_SETTINGS),
+                          Triple("✈️", "Modo avião", Settings.ACTION_AIRPLANE_MODE_SETTINGS),
+                          Triple("⚙️", "iLauncher", "")
+                      )
+                      val lk = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          background = rounded(0x99000000.toInt(), dp(22))
+                          setPadding(dp(12), dp(14), dp(12), dp(8))
+                      }
+                      lk.addView(tv("Atalhos", 13f, 0xFFBBBBBB.toInt(), true).apply { setPadding(dp(4), 0, 0, dp(8)) })
+                      for (chunk in links.chunked(3)) {
+                          val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                          for (i in 0 until 3) {
+                              val item = chunk.getOrNull(i)
+                              if (item == null) {
+                                  r.addView(View(this), LinearLayout.LayoutParams(0, dp(64), 1f))
+                                  continue
+                              }
+                              val chip = LinearLayout(this).apply {
+                                  orientation = LinearLayout.VERTICAL
+                                  gravity = Gravity.CENTER
+                                  background = rounded(0x33FFFFFF, dp(14))
+                                  setPadding(dp(4), dp(6), dp(4), dp(6))
+                              }
+                              chip.addView(tv(item.first, 22f, Color.WHITE))
+                              chip.addView(tv(item.second, 11f, Color.WHITE).apply {
+                                  maxLines = 1
+                                  ellipsize = TextUtils.TruncateAt.END
+                              })
+                              chip.setOnClickListener {
+                                  if (item.third.isEmpty()) {
+                                      openSettings()
+                                  } else {
+                                      try {
+                                          startActivity(Intent(item.third))
+                                      } catch (_: Exception) {
+                                          Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
+                                      }
+                                  }
+                              }
+                              pressable(chip)
+                              r.addView(chip, LinearLayout.LayoutParams(0, dp(64), 1f).apply {
+                                  setMargins(dp(3), dp(3), dp(3), dp(3))
+                              })
+                          }
+                          lk.addView(r, LinearLayout.LayoutParams(MATCH, WRAP))
+                      }
+                      col.addView(lk, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
+                  }
+
+                  // Medidor de temperatura (bateria)
+                  if (Cfg.b("wTemp")) {
+                      val temp = (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+                      val tc = LinearLayout(this).apply {
+                          orientation = LinearLayout.VERTICAL
+                          gravity = Gravity.CENTER_HORIZONTAL
+                          background = rounded(0x99000000.toInt(), dp(22))
+                          setPadding(dp(16), dp(14), dp(16), dp(10))
+                      }
+                      tc.addView(tv("Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
+                      val g = GaugeView(this)
+                      g.value = temp
+                      g.title = "Bateria"
+                      tc.addView(g, LinearLayout.LayoutParams(dp(150), dp(140)))
+                      col.addView(tc, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
+                  }
 
                   // Armazenamento
                   var used = 0.0
@@ -2004,12 +2236,14 @@ jobs:
                   imm.hideSoftInputFromWindow(v.windowToken, 0)
               }
 
-              private fun openGroup(title: String, pkgs: List<String>, folder: Entry.Folder?) {
+              private fun openGroup(title: String, pkgs: List<String>, folder: Entry.Folder?, from: View? = null) {
                   if (searchOverlay != null) closeSearch()
                   if (groupOverlay != null) closeGroup()
 
+                  val oneP = Cfg.s("panelStyle") == "oneui"
+                  val pc = if (oneP) 0xFF1C1C1E.toInt() else Color.WHITE
                   val ov = FrameLayout(this)
-                  ov.setBackgroundColor(0xAA000000.toInt())
+                  ov.setBackgroundColor(if (oneP) 0x66000000 else 0xAA000000.toInt())
                   ov.isClickable = true
                   ov.setOnClickListener { closeGroup() }
 
@@ -2018,14 +2252,14 @@ jobs:
                       orientation = LinearLayout.VERTICAL
                       gravity = Gravity.CENTER_HORIZONTAL
                       setPadding(dp(12), dp(16), dp(12), dp(16))
-                      background = rounded(0xCC3A3A3C.toInt(), dp(30))
+                      background = if (oneP) rounded(0xF7FFFFFF.toInt(), dp(28)) else rounded(0x99808088.toInt(), dp(30))
                       isClickable = true
                   }
                   val titleV: TextView = if (folder != null) EditText(this) else TextView(this)
                   titleV.apply {
                       text = title
                       textSize = 22f
-                      setTextColor(Color.WHITE)
+                      setTextColor(pc)
                       gravity = Gravity.CENTER
                       if (folder != null) {
                           background = null
@@ -2055,7 +2289,7 @@ jobs:
                               }
                               val iv = roundIcon(a.icon, iconPx)
                               cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
-                              cell.addView(labelView(a.label), LinearLayout.LayoutParams(MATCH, WRAP))
+                              cell.addView(labelView(a.label, pc), LinearLayout.LayoutParams(MATCH, WRAP))
                               cell.setOnClickListener { launch(a, iv) }
                               cell.setOnLongClickListener {
                                   haptic(it)
@@ -2091,22 +2325,37 @@ jobs:
                   groupFolder = folder
 
                   ov.alpha = 0f
-                  panel.scaleX = 0.85f
-                  panel.scaleY = 0.85f
+                  panel.alpha = 0f
                   panel.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                  ov.animate().alpha(1f).setDuration(180).start()
-                  panel.animate().scaleX(1f).scaleY(1f).setDuration(280)
-                      .setInterpolator(OvershootInterpolator(1.1f))
-                      .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
-                      .start()
+                  panel.post {
+                      if (from != null && from.width > 0 && from.isAttachedToWindow) {
+                          val pl = IntArray(2)
+                          panel.getLocationOnScreen(pl)
+                          val fl = IntArray(2)
+                          from.getLocationOnScreen(fl)
+                          panel.translationX = (fl[0] + from.width / 2f) - (pl[0] + panel.width / 2f)
+                          panel.translationY = (fl[1] + from.height / 2f) - (pl[1] + panel.height / 2f)
+                          panel.scaleX = 0.2f
+                          panel.scaleY = 0.2f
+                      } else {
+                          panel.scaleX = 0.85f
+                          panel.scaleY = 0.85f
+                      }
+                      ov.animate().alpha(1f).setDuration(240).start()
+                      panel.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).alpha(1f)
+                          .setDuration(340).setInterpolator(springOut)
+                          .withEndAction { panel.setLayerType(View.LAYER_TYPE_NONE, null) }
+                          .start()
+                  }
               }
 
               private fun closeGroup() {
                   val ov = groupOverlay ?: return
                   hideKeyboard(ov)
-                  content.removeView(ov)
                   groupOverlay = null
                   groupFolder = null
+                  (ov as? ViewGroup)?.getChildAt(0)?.animate()?.scaleX(0.9f)?.scaleY(0.9f)?.setDuration(180)?.start()
+                  ov.animate().alpha(0f).setDuration(180).withEndAction { content.removeView(ov) }.start()
                   normalize()
                   saveAll()
                   rebuild()
@@ -2219,7 +2468,14 @@ jobs:
               private fun isHomePage(p: Int) = p >= firstHome() && p < firstHome() + homePages.size
 
               private fun haptic(v: View) {
+                  v.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(120).start()
                   if (Cfg.b("haptics")) v.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+              }
+
+              private fun updateGear() {
+                  if (!::gearBtn.isInitialized) return
+                  val onFirst = homePages.isNotEmpty() && pager.currentItem == firstHome()
+                  gearBtn.visibility = if (Cfg.b("gear") && !editing && onFirst) View.VISIBLE else View.GONE
               }
 
               private fun glass(pct: Int): Int {
@@ -2228,20 +2484,26 @@ jobs:
               }
 
               private fun styleChrome() {
-                  dock.background = rounded(glass(Cfg.i("dockAlpha")), dp(34))
+                  val bar = Cfg.s("pillStyle") == "bar"
+                  val dark = Cfg.s("tint") == "dark"
+                  dock.background = rounded(glass(Cfg.i("dockAlpha")), dp(Cfg.i("dockRadius")))
+                  if (bar) dock.setPadding(dp(6), dp(10), dp(6), dp(10)) else dock.setPadding(dp(8), dp(12), dp(8), dp(12))
                   dots.visibility = if (Cfg.b("dots")) View.VISIBLE else View.GONE
-                  gearBtn.visibility = if (Cfg.b("gear") && !editing) View.VISIBLE else View.GONE
+                  updateGear()
                   content.setBackgroundColor(Color.argb(Cfg.i("dim") * 255 / 100, 0, 0, 0))
-                  if (Cfg.s("pillStyle") == "bar") {
-                      val dark = Cfg.s("tint") == "dark"
-                      pill.text = "🔍  Pesquisar"
+
+                  if (bar) {
+                      val sp = SpannableStringBuilder("G    Pesquisar")
+                      sp.setSpan(ForegroundColorSpan(0xFF4285F4.toInt()), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                      sp.setSpan(StyleSpan(Typeface.BOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                      pill.text = sp
                       pill.textSize = 15f
                       pill.gravity = Gravity.CENTER_VERTICAL
-                      pill.setTextColor(if (dark) Color.WHITE else 0xFF555555.toInt())
-                      pill.background = rounded(if (dark) 0xE61C1C1E.toInt() else 0xEEFFFFFF.toInt(), dp(24))
-                      pill.setPadding(dp(20), 0, dp(20), 0)
-                      pill.layoutParams = LinearLayout.LayoutParams(MATCH, dp(48)).apply {
-                          setMargins(dp(16), 0, dp(16), dp(10))
+                      pill.setTextColor(if (dark) Color.WHITE else 0xFF5F6368.toInt())
+                      pill.background = rounded(if (dark) 0xE61C1C1E.toInt() else 0xF2FFFFFF.toInt(), dp(26))
+                      pill.setPadding(dp(22), 0, dp(22), 0)
+                      pill.layoutParams = LinearLayout.LayoutParams(MATCH, dp(50)).apply {
+                          setMargins(dp(14), dp(4), dp(14), dp(2))
                       }
                   } else {
                       pill.text = "🔍  Pesquisar"
@@ -2254,6 +2516,27 @@ jobs:
                           gravity = Gravity.CENTER_HORIZONTAL
                           bottomMargin = dp(10)
                       }
+                  }
+
+                  // Ordem das barras: One UI = busca, bolinhas, dock | iOS = bolinhas, busca, dock
+                  column.removeView(pill)
+                  column.removeView(dots)
+                  if (bar) {
+                      column.addView(pill, 1)
+                      column.addView(dots, 2)
+                  } else {
+                      column.addView(dots, 1)
+                      column.addView(pill, 2)
+                  }
+                  dots.setOnLongClickListener {
+                      haptic(it)
+                      openHomeMenu()
+                      true
+                  }
+                  dock.setOnLongClickListener {
+                      haptic(it)
+                      openHomeMenu()
+                      true
                   }
                   updatePill()
                   buildDock()
@@ -2455,6 +2738,11 @@ jobs:
 
                   c = section(list, "DOCK E BARRAS")
                   rowToggle(c, "Mostrar dock", "dock")
+                  rowSeek(c, "Arredondamento do dock", "dockRadius", 0, 40, "")
+                  rowChoice(
+                      c, "Estilo do painel de pastas", "panelStyle",
+                      listOf("ios" to "Vidro cinza (iOS)", "oneui" to "Cartão branco (One UI)")
+                  )
                   rowSeek(c, "Apps no dock", "dockMax", 3, 6, "")
                   rowSeek(c, "Transparência do dock", "dockAlpha", 0, 100, "%")
                   rowChoice(c, "Cor do vidro", "tint", listOf("light" to "Claro", "dark" to "Escuro"))
@@ -2474,6 +2762,8 @@ jobs:
                   rowToggle(c, "Widget de calendário", "wCal")
                   rowToggle(c, "Widget de bateria", "wBat")
                   rowToggle(c, "Widget de armazenamento", "wSto")
+                  rowToggle(c, "Atalhos para as configurações", "wLinks")
+                  rowToggle(c, "Medidor de temperatura", "wTemp")
 
                   c = section(list, "FUNÇÕES E GESTOS")
                   rowToggle(c, "Deslizar para baixo abre a pesquisa", "swipeSearch")
@@ -2481,6 +2771,10 @@ jobs:
                   rowToggle(c, "Criar pasta arrastando app sobre app", "folders")
                   rowToggle(c, "Ícones balançando ao editar", "wiggle")
                   rowToggle(c, "Vibração ao segurar", "haptics")
+                  rowChoice(
+                      c, "Estilo das animações", "animStyle",
+                      listOf("ios" to "iPhone", "oneui" to "One UI (Samsung)")
+                  )
                   rowToggle(c, "Animação ao abrir apps", "animLaunch")
                   rowToggle(c, "Animação ao tocar", "animPress")
                   rowToggle(c, "Efeito ao trocar de página", "animPage")
@@ -2718,6 +3012,9 @@ jobs:
 
                   override fun onBindViewHolder(holder: VH, position: Int) {
                       val f = holder.itemView as FrameLayout
+                      f.scaleX = 1f
+                      f.scaleY = 1f
+                      f.alpha = 1f
                       f.removeAllViews()
                       val page = when {
                           todayOn() && position == 0 -> buildToday()
