@@ -271,6 +271,9 @@ jobs:
                   "dim" to 0,
                   "gear" to true,
                   "tempHome" to true,
+                  "homeHeader" to "none",
+                  "folderAlpha" to 40,
+                  "wallpaper" to "system",
                   "wClock" to true,
                   "wCal" to true,
                   "wBat" to true,
@@ -301,13 +304,14 @@ jobs:
                   val over: Map<String, Any> = when (name) {
                       "ios_dark" -> mapOf("tint" to "dark", "dockAlpha" to 45, "dim" to 15)
                       "oneui" -> mapOf(
-                          "iconSet" to "original", "shape" to "squircle", "iconSize" to 78,
-                          "cols" to 5, "rows" to 6, "labelSize" to 12,
-                          "dockMax" to 5, "dockAlpha" to 22, "dockRadius" to 28,
-                          "pillStyle" to "bar", "panelStyle" to "oneui",
+                          "iconSet" to "oneui", "shape" to "squircle", "iconSize" to 68,
+                          "cols" to 4, "rows" to 5, "labelSize" to 11,
+                          "dockMax" to 4, "dockAlpha" to 0, "dockRadius" to 28,
+                          "pillStyle" to "bar", "panelStyle" to "oneui", "homeHeader" to "oneui",
                           "library" to false, "drawerGesture" to true, "animStyle" to "oneui",
-                          "folderStyle" to "grid2", "wiggle" to false, "swipeSearch" to false,
-                          "animPage" to false, "animPress" to true, "gear" to false
+                          "folderStyle" to "grid3", "folderAlpha" to 75,
+                          "wiggle" to false, "swipeSearch" to false, "animPage" to false,
+                          "animPress" to true, "gear" to false, "tempHome" to false
                       )
                       "classic" -> mapOf(
                           "iconSet" to "original", "shape" to "circle", "iconSize" to 64, "cols" to 5,
@@ -332,6 +336,196 @@ jobs:
                   }
                   e.putString("skin", name)
                   e.apply()
+              }
+          }
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/Widgets.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.content.Context
+          import android.graphics.Canvas
+          import android.graphics.Color
+          import android.graphics.LinearGradient
+          import android.graphics.Paint
+          import android.graphics.PixelFormat
+          import android.graphics.RadialGradient
+          import android.graphics.RectF
+          import android.graphics.Shader
+          import android.graphics.Typeface
+          import android.graphics.ColorFilter
+          import android.graphics.drawable.Drawable
+          import android.view.View
+          import java.util.Calendar
+
+          // Relógio analógico (pílula de data no topo da tela inicial)
+          class AnalogClockView(ctx: Context) : View(ctx) {
+              private val face = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val ring = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val tick = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val hand = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val ticker = object : Runnable {
+                  override fun run() {
+                      invalidate()
+                      postDelayed(this, 1000)
+                  }
+              }
+
+              init {
+                  face.color = 0xFFF6F6F8.toInt()
+                  ring.style = Paint.Style.STROKE
+                  ring.color = 0xFFC9C9D0.toInt()
+                  tick.color = 0xFF55555C.toInt()
+                  tick.strokeCap = Paint.Cap.ROUND
+                  hand.strokeCap = Paint.Cap.ROUND
+              }
+
+              override fun onAttachedToWindow() {
+                  super.onAttachedToWindow()
+                  post(ticker)
+              }
+
+              override fun onDetachedFromWindow() {
+                  removeCallbacks(ticker)
+                  super.onDetachedFromWindow()
+              }
+
+              private fun drawHand(c: Canvas, cx: Float, cy: Float, angle: Float, len: Float, w: Float, color: Int) {
+                  hand.strokeWidth = w
+                  hand.color = color
+                  c.save()
+                  c.rotate(angle, cx, cy)
+                  c.drawLine(cx, cy + len * 0.12f, cx, cy - len, hand)
+                  c.restore()
+              }
+
+              override fun onDraw(c: Canvas) {
+                  val r = Math.min(width, height) / 2f
+                  val cx = width / 2f
+                  val cy = height / 2f
+                  c.drawCircle(cx, cy, r - 1f, face)
+                  ring.strokeWidth = r * 0.06f
+                  c.drawCircle(cx, cy, r - 1f, ring)
+                  tick.strokeWidth = r * 0.05f
+                  for (i in 0 until 12) {
+                      c.save()
+                      c.rotate(i * 30f, cx, cy)
+                      c.drawLine(cx, cy - r * 0.86f, cx, cy - r * (if (i % 3 == 0) 0.7f else 0.78f), tick)
+                      c.restore()
+                  }
+                  val cal = Calendar.getInstance()
+                  val h = cal.get(Calendar.HOUR) % 12
+                  val m = cal.get(Calendar.MINUTE)
+                  val s = cal.get(Calendar.SECOND)
+                  drawHand(c, cx, cy, (h + m / 60f) * 30f, r * 0.5f, r * 0.1f, 0xFF2B2B30.toInt())
+                  drawHand(c, cx, cy, (m + s / 60f) * 6f, r * 0.72f, r * 0.07f, 0xFF2B2B30.toInt())
+                  drawHand(c, cx, cy, s * 6f, r * 0.78f, r * 0.035f, 0xFFFF7A00.toInt())
+              }
+          }
+
+          // Ícones da barra de pesquisa (G, microfone e lente)
+          class GlyphView(ctx: Context) : View(ctx) {
+              var kind = "g"
+              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+              private val rect = RectF()
+
+              override fun onDraw(c: Canvas) {
+                  val w = width.toFloat()
+                  val h = height.toFloat()
+                  when (kind) {
+                      "g" -> {
+                          p.style = Paint.Style.FILL
+                          p.shader = LinearGradient(
+                              0f, 0f, w, h,
+                              intArrayOf(0xFF4285F4.toInt(), 0xFFEA4335.toInt(), 0xFFFBBC05.toInt(), 0xFF34A853.toInt()),
+                              floatArrayOf(0f, 0.35f, 0.65f, 1f), Shader.TileMode.CLAMP
+                          )
+                          p.textSize = h * 0.95f
+                          p.typeface = Typeface.DEFAULT_BOLD
+                          p.textAlign = Paint.Align.CENTER
+                          c.drawText("G", w / 2f, h * 0.82f, p)
+                          p.shader = null
+                      }
+                      "mic" -> {
+                          p.shader = null
+                          p.color = 0xFF5F6368.toInt()
+                          p.style = Paint.Style.FILL
+                          rect.set(w * 0.34f, h * 0.10f, w * 0.66f, h * 0.58f)
+                          c.drawRoundRect(rect, w * 0.16f, w * 0.16f, p)
+                          p.style = Paint.Style.STROKE
+                          p.strokeWidth = w * 0.08f
+                          p.strokeCap = Paint.Cap.ROUND
+                          rect.set(w * 0.22f, h * 0.28f, w * 0.78f, h * 0.74f)
+                          c.drawArc(rect, 0f, 180f, false, p)
+                          c.drawLine(w * 0.5f, h * 0.74f, w * 0.5f, h * 0.90f, p)
+                      }
+                      else -> {
+                          p.shader = null
+                          p.color = 0xFF5F6368.toInt()
+                          p.style = Paint.Style.STROKE
+                          p.strokeWidth = w * 0.08f
+                          p.strokeCap = Paint.Cap.ROUND
+                          val a = w * 0.12f
+                          val b = w * 0.88f
+                          val l = w * 0.24f
+                          c.drawLine(a, a + l, a, a, p); c.drawLine(a, a, a + l, a, p)
+                          c.drawLine(b - l, a, b, a, p); c.drawLine(b, a, b, a + l, p)
+                          c.drawLine(a, b - l, a, b, p); c.drawLine(a, b, a + l, b, p)
+                          c.drawLine(b - l, b, b, b, p); c.drawLine(b, b, b, b - l, p)
+                          c.drawCircle(w / 2f, h / 2f, w * 0.14f, p)
+                      }
+                  }
+              }
+          }
+
+          // Papel de parede suave (opcional), parecido com o da One UI
+          class SoftWallpaper(
+              private val top: Int,
+              private val bottom: Int,
+              private val blobs: List<Blob>
+          ) : Drawable() {
+
+              class Blob(val x: Float, val y: Float, val r: Float, val color: Int)
+
+              private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+
+              override fun draw(c: Canvas) {
+                  val w = bounds.width().toFloat()
+                  val h = bounds.height().toFloat()
+                  p.shader = LinearGradient(0f, 0f, 0f, h, top, bottom, Shader.TileMode.CLAMP)
+                  c.drawRect(0f, 0f, w, h, p)
+                  for (b in blobs) {
+                      p.shader = RadialGradient(
+                          b.x * w, b.y * h, b.r * w, b.color, b.color and 0x00FFFFFF, Shader.TileMode.CLAMP
+                      )
+                      c.drawCircle(b.x * w, b.y * h, b.r * w, p)
+                  }
+                  p.shader = null
+              }
+
+              override fun setAlpha(alpha: Int) {}
+
+              override fun setColorFilter(colorFilter: ColorFilter?) {}
+
+              @Deprecated("Deprecated in Java")
+              override fun getOpacity() = PixelFormat.OPAQUE
+
+              companion object {
+                  fun pink() = SoftWallpaper(
+                      0xFFFFC9E6.toInt(), 0xFFE2B8FF.toInt(),
+                      listOf(
+                          Blob(0.5f, 0.3f, 0.75f, 0xEEFF4FA3.toInt()),
+                          Blob(0.25f, 0.8f, 0.6f, 0xCCFFF0F7.toInt()),
+                          Blob(0.9f, 0.55f, 0.5f, 0xAAC77DFF.toInt())
+                      )
+                  )
+
+                  fun blue() = SoftWallpaper(
+                      0xFF0A84FF.toInt(), 0xFF5E5CE6.toInt(),
+                      listOf(
+                          Blob(0.2f, 0.2f, 0.7f, 0xCC64D2FF.toInt()),
+                          Blob(0.8f, 0.8f, 0.7f, 0xCCBF5AF2.toInt())
+                      )
+                  )
               }
           }
           EOF_FILE
@@ -632,8 +826,8 @@ jobs:
               }
 
               private fun messages(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFF5AA2FF), k(0xFF2563EB)) else gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
-                  val w = pt(Color.WHITE)
+                  if (oneui) gradient(c, k(0xFFF4F7FF), k(0xFFDCE6FF)) else gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
+                  val w = pt(if (oneui) k(0xFF3B6FF5) else Color.WHITE)
                   c.drawOval(RectF(40f, 50f, 216f, 180f), w)
                   val t = Path()
                   t.moveTo(78f, 160f)
@@ -644,7 +838,7 @@ jobs:
               }
 
               private fun camera(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFFFF7A7A), k(0xFFE11D48)) else gradient(c, k(0xFFD8D8DD), k(0xFF9A9AA0))
+                  gradient(c, k(0xFFE9E9EE), k(0xFFB4B4BA))
                   val dark = pt(k(0xFF1C1C1E))
                   c.drawRoundRect(RectF(36f, 84f, 220f, 198f), 26f, 26f, dark)
                   c.drawRoundRect(RectF(92f, 64f, 148f, 96f), 10f, 10f, dark)
@@ -654,7 +848,7 @@ jobs:
               }
 
               private fun settings(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFF6AB0FF), k(0xFF2F6FE0)) else gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
+                  if (oneui) gradient(c, k(0xFF2B2B30), k(0xFF0F0F12)) else gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
                   val g = pt(if (oneui) Color.WHITE else k(0xFF3A3A3C))
                   for (i in 0 until 8) {
                       c.save()
@@ -663,7 +857,7 @@ jobs:
                       c.restore()
                   }
                   c.drawCircle(128f, 128f, 70f, g)
-                  c.drawCircle(128f, 128f, 32f, pt(if (oneui) k(0xFF3F7FE8) else k(0xFFAEAEB2)))
+                  c.drawCircle(128f, 128f, 32f, pt(if (oneui) k(0xFF17171A) else k(0xFFAEAEB2)))
               }
 
               private fun hand(c: Canvas, angle: Float, len: Float, w: Float, color: Int) {
@@ -708,8 +902,30 @@ jobs:
                   }
               }
 
+              private fun internet(c: Canvas) {
+                  gradient(c, k(0xFFF4F7FF), k(0xFFDCE6FF))
+                  val orbit = pt(k(0xFF6C8CFF), 14f)
+                  val oval = RectF(36f, 104f, 220f, 152f)
+                  c.save()
+                  c.rotate(-28f, 128f, 128f)
+                  c.drawArc(oval, 180f, 180f, false, orbit)
+                  c.restore()
+                  c.drawCircle(128f, 128f, 62f, pt(k(0xFF4361EE)))
+                  val hl = pt(k(0xFF7B93FF))
+                  hl.alpha = 150
+                  c.drawCircle(108f, 106f, 28f, hl)
+                  c.save()
+                  c.rotate(-28f, 128f, 128f)
+                  c.drawArc(oval, 0f, 180f, false, orbit)
+                  c.restore()
+              }
+
               private fun browser(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFFA78BFA), k(0xFF6D28D9)) else gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
+                  if (oneui) {
+                      internet(c)
+                      return
+                  }
+                  gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
                   c.drawCircle(128f, 128f, 96f, pt(Color.WHITE, 8f))
                   for (i in 0 until 12) {
                       c.save()
@@ -736,6 +952,21 @@ jobs:
               }
 
               private fun photos(c: Canvas) {
+                  if (oneui) {
+                      gradient(c, k(0xFFFF8FB8), k(0xFFFF4D8D))
+                      val pc = listOf(
+                          k(0xFFFFFFFF), k(0xFFFFE066), k(0xFFFFB347),
+                          k(0xFFFFFFFF), k(0xFFFFE066), k(0xFFFFB347)
+                      )
+                      for (i in 0 until 6) {
+                          val rad = Math.toRadians(i * 60.0)
+                          val p = pt(pc[i])
+                          p.alpha = 235
+                          c.drawCircle(128f + (Math.sin(rad) * 46).toFloat(), 128f - (Math.cos(rad) * 46).toFloat(), 38f, p)
+                      }
+                      c.drawCircle(128f, 128f, 20f, pt(Color.WHITE))
+                      return
+                  }
                   c.drawColor(if (oneui) k(0xFFFFE4EC) else Color.WHITE)
                   val colors = listOf(
                       k(0xFFFFCC00), k(0xFFFF9500), k(0xFFFF3B30), k(0xFFFF2D55),
@@ -769,6 +1000,15 @@ jobs:
               }
 
               private fun notes(c: Canvas) {
+                  if (oneui) {
+                      gradient(c, k(0xFFFF6B6B), k(0xFFE5383B))
+                      c.drawRoundRect(RectF(62f, 44f, 194f, 212f), 20f, 20f, pt(Color.WHITE))
+                      val l = pt(k(0xFFFF6B6B), 8f)
+                      c.drawLine(88f, 96f, 168f, 96f, l)
+                      c.drawLine(88f, 130f, 168f, 130f, l)
+                      c.drawLine(88f, 164f, 140f, 164f, l)
+                      return
+                  }
                   c.drawColor(Color.WHITE)
                   c.drawRect(0f, 0f, 256f, 62f, pt(k(0xFFFFCC00)))
                   val line = pt(k(0xFFD1D1D6), 6f)
@@ -841,7 +1081,9 @@ jobs:
           import android.graphics.Color
           import android.graphics.Outline
           import android.graphics.Typeface
+          import android.graphics.drawable.ColorDrawable
           import android.graphics.drawable.Drawable
+          import android.graphics.drawable.LayerDrawable
           import android.graphics.drawable.GradientDrawable
           import android.net.Uri
           import android.os.BatteryManager
@@ -887,6 +1129,7 @@ jobs:
           import androidx.core.widget.doAfterTextChanged
           import androidx.recyclerview.widget.RecyclerView
           import androidx.viewpager2.widget.ViewPager2
+          import java.util.Calendar
           import java.util.Date
           import java.util.Locale
 
@@ -956,6 +1199,8 @@ jobs:
               private lateinit var gearBtn: TextView
               private lateinit var column: LinearLayout
               private lateinit var barRow: FrameLayout
+              private lateinit var searchBar: LinearLayout
+              private val HDR_ROWS = 2
               private lateinit var tempView: TextView
               private val springOut = PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
 
@@ -1036,6 +1281,19 @@ jobs:
                       gravity = Gravity.CENTER_HORIZONTAL
                       bottomMargin = dp(10)
                   })
+
+                  searchBar = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(18), 0, dp(18), 0)
+                      setOnClickListener { openSearch() }
+                  }
+                  searchBar.addView(GlyphView(this).apply { kind = "g" }, LinearLayout.LayoutParams(dp(24), dp(24)))
+                  searchBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+                  searchBar.addView(GlyphView(this).apply { kind = "mic" }, LinearLayout.LayoutParams(dp(24), dp(24)).apply {
+                      rightMargin = dp(16)
+                  })
+                  searchBar.addView(GlyphView(this).apply { kind = "lens" }, LinearLayout.LayoutParams(dp(24), dp(24)))
 
                   dock = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
@@ -1315,7 +1573,11 @@ jobs:
 
               private fun rebuild() {
                   val per = COLS * rows
-                  homePages = home.chunked(per).ifEmpty { listOf(emptyList<Entry>()) }
+                  val first = firstPageSize()
+                  val pages = mutableListOf<List<Entry>>()
+                  pages.add(home.take(first))
+                  pages.addAll(home.drop(first).chunked(per))
+                  homePages = pages
                   pager.adapter?.notifyDataSetChanged()
                   pager.offscreenPageLimit = Math.max(1, Math.min(homePages.size + 1, 5))
                   if (!positioned && loaded) {
@@ -1325,6 +1587,7 @@ jobs:
                   buildDock()
                   updateDots(pager.currentItem)
                   updatePill()
+                  updateGear()
               }
 
               // ================= Operações =================
@@ -1528,7 +1791,7 @@ jobs:
               private fun folderIconView(f: Entry.Folder): View {
                   val n = if (Cfg.s("folderStyle") == "grid2") 2 else 3
                   val box = FrameLayout(this)
-                  box.background = rounded(glass(40), (iconPx * 0.225f).toInt())
+                  box.background = rounded(glass(Cfg.i("folderAlpha")), (iconPx * 0.225f).toInt())
                   val pad = (iconPx * (if (n == 2) 0.14f else 0.1f)).toInt()
                   val mini = (iconPx * (if (n == 2) 0.32f else 0.22f)).toInt()
                   val grid = LinearLayout(this).apply {
@@ -1720,7 +1983,7 @@ jobs:
                       return
                   }
                   if (target == null) {
-                      var tIdx = Math.min(home.size, (hp + 1) * per)
+                      var tIdx = Math.min(home.size, pageEnd(hp))
                       home.removeAt(dIdx)
                       if (dIdx < tIdx) tIdx--
                       home.add(tIdx.coerceIn(0, home.size), d)
@@ -1760,7 +2023,9 @@ jobs:
                           true
                       }
                   }
-                  for (r in 0 until rows) {
+                  val withHeader = hp == 0 && headerActive()
+                  if (withHeader) root.addView(buildHomeHeader(), LinearLayout.LayoutParams(MATCH, 0, HDR_ROWS.toFloat()))
+                  for (r in 0 until (if (withHeader) rows - HDR_ROWS else rows)) {
                       val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
                       root.addView(row, LinearLayout.LayoutParams(MATCH, 0, 1f))
                       for (c in 0 until COLS) {
@@ -1811,6 +2076,7 @@ jobs:
 
               private fun updateDots(selected: Int) {
                   val total = pageCount()
+                  dots.visibility = if (Cfg.b("dots") && total > 1) View.VISIBLE else View.GONE
                   if (dots.childCount != total) {
                       dots.removeAllViews()
                       for (i in 0 until total) {
@@ -1832,8 +2098,93 @@ jobs:
 
               private fun updatePill() {
                   val p = pager.currentItem
-                  pill.visibility = if (!Cfg.b("pill")) View.GONE
+                  val bar = Cfg.s("pillStyle") == "bar"
+                  val state = if (!Cfg.b("pill")) View.GONE
                   else if (!editing && isHomePage(p)) View.VISIBLE else View.INVISIBLE
+                  pill.visibility = if (bar) View.GONE else state
+                  searchBar.visibility = if (bar) state else View.GONE
+              }
+
+              // ---------- Widgets no topo da tela inicial (estilo One UI) ----------
+
+              private fun buildHomeHeader(): View {
+                  val box = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(6), dp(6), dp(6), dp(6))
+                  }
+                  val now = Calendar.getInstance()
+                  val hour = now.get(Calendar.HOUR_OF_DAY)
+                  val greet = if (hour < 12) "Bom dia" else if (hour < 18) "Boa tarde" else "Boa noite"
+                  val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                  val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                  val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+                  val pct = if (level >= 0 && scale > 0) level * 100 / scale else 0
+                  val temp = (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+
+                  // Cartão de resumo (frosted)
+                  val card = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(Color.argb(70, 255, 255, 255), dp(24))
+                      setPadding(dp(18), dp(12), dp(18), dp(10))
+                  }
+                  val badge = TextView(this).apply {
+                      text = "≋"
+                      textSize = 14f
+                      setTextColor(Color.WHITE)
+                      gravity = Gravity.CENTER
+                      background = GradientDrawable(
+                          GradientDrawable.Orientation.TL_BR,
+                          intArrayOf(0xFF5EEAD4.toInt(), 0xFF0D9488.toInt())
+                      ).apply { shape = GradientDrawable.OVAL }
+                  }
+                  card.addView(badge, LinearLayout.LayoutParams(dp(24), dp(24)))
+                  card.addView(tv(greet, 21f, Color.WHITE, true).apply {
+                      setShadowLayer(4f, 0f, 1f, 0x55000000)
+                  }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
+                  card.addView(
+                      tv(
+                          String.format(Locale.getDefault(), "Tenha um dia especial. Bateria em %d%%, %.1f °C.", pct, temp),
+                          13f, 0xF2FFFFFF.toInt()
+                      ).apply { setShadowLayer(3f, 0f, 1f, 0x44000000) },
+                      LinearLayout.LayoutParams(MATCH, WRAP)
+                  )
+                  box.addView(card, LinearLayout.LayoutParams(MATCH, 0, 1.25f))
+
+                  // Pílulas: temperatura e relógio/data
+                  val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  val blue = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      background = GradientDrawable(
+                          GradientDrawable.Orientation.LEFT_RIGHT,
+                          intArrayOf(0xFF4EA1FF.toInt(), 0xFF2B6FE8.toInt())
+                      ).apply { cornerRadius = dp(40).toFloat() }
+                      setPadding(dp(14), 0, dp(14), 0)
+                  }
+                  blue.addView(tv("🌡", 26f, Color.WHITE))
+                  val bt = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  bt.addView(tv(String.format(Locale.getDefault(), "%.0f°", temp), 22f, Color.WHITE, true))
+                  bt.addView(tv("Bateria", 11f, 0xF2FFFFFF.toInt()))
+                  blue.addView(bt, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
+
+                  val white = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      background = rounded(0xE6FFFFFF.toInt(), dp(40))
+                      setPadding(dp(10), 0, dp(12), 0)
+                  }
+                  white.addView(AnalogClockView(this), LinearLayout.LayoutParams(dp(38), dp(38)))
+                  white.addView(
+                      tv(
+                          java.text.SimpleDateFormat("EEE, d MMM", Locale.getDefault()).format(Date()),
+                          15f, 0xFF1C1C1E.toInt()
+                      ),
+                      LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) }
+                  )
+                  row.addView(blue, LinearLayout.LayoutParams(0, MATCH, 1f).apply { rightMargin = dp(6) })
+                  row.addView(white, LinearLayout.LayoutParams(0, MATCH, 1f).apply { leftMargin = dp(6) })
+                  box.addView(row, LinearLayout.LayoutParams(MATCH, 0, 0.75f).apply { topMargin = dp(10) })
+                  return box
               }
 
               // ---------- Hoje (widgets) ----------
@@ -2439,6 +2790,9 @@ jobs:
               private fun libOn() = Cfg.b("library")
               private fun firstHome() = if (todayOn()) 1 else 0
               private fun pageCount() = firstHome() + homePages.size + (if (libOn()) 1 else 0)
+              private fun headerActive() = Cfg.s("homeHeader") == "oneui" && rows - HDR_ROWS >= 1
+              private fun firstPageSize() = if (headerActive()) COLS * (rows - HDR_ROWS) else COLS * rows
+              private fun pageEnd(hp: Int) = firstPageSize() + hp * (COLS * rows)
               private fun isHomePage(p: Int) = p >= firstHome() && p < firstHome() + homePages.size
 
               private fun haptic(v: View) {
@@ -2451,6 +2805,8 @@ jobs:
                   val show = homePages.isNotEmpty() && pager.currentItem == firstHome() && !editing
                   gearBtn.visibility = if (Cfg.b("gear") && show) View.VISIBLE else View.GONE
                   tempView.visibility = if (Cfg.b("tempHome") && show) View.VISIBLE else View.GONE
+                  barRow.visibility = if (dots.visibility == View.VISIBLE || gearBtn.visibility == View.VISIBLE ||
+                      tempView.visibility == View.VISIBLE) View.VISIBLE else View.GONE
               }
 
               private fun readTemp(): Float {
@@ -2475,66 +2831,59 @@ jobs:
                   return if (Cfg.s("tint") == "dark") Color.argb(a, 0, 0, 0) else Color.argb(a, 255, 255, 255)
               }
 
+              private fun buildBackdrop(): Drawable {
+                  val dimColor = ColorDrawable(Color.argb(Cfg.i("dim") * 255 / 100, 0, 0, 0))
+                  val wp: Drawable? = when (Cfg.s("wallpaper")) {
+                      "pink" -> SoftWallpaper.pink()
+                      "blue" -> SoftWallpaper.blue()
+                      else -> null
+                  }
+                  return if (wp == null) dimColor else LayerDrawable(arrayOf(wp, dimColor))
+              }
+
               private fun styleChrome() {
                   val bar = Cfg.s("pillStyle") == "bar"
                   val dark = Cfg.s("tint") == "dark"
                   dock.background = rounded(glass(Cfg.i("dockAlpha")), dp(Cfg.i("dockRadius")))
-                  if (bar) dock.setPadding(dp(6), dp(10), dp(6), dp(10)) else dock.setPadding(dp(8), dp(12), dp(8), dp(12))
-                  dots.visibility = if (Cfg.b("dots")) View.VISIBLE else View.GONE
-                  updateGear()
-                  content.setBackgroundColor(Color.argb(Cfg.i("dim") * 255 / 100, 0, 0, 0))
+                  if (bar) dock.setPadding(dp(6), dp(8), dp(6), dp(8)) else dock.setPadding(dp(8), dp(12), dp(8), dp(12))
+                  dots.visibility = if (Cfg.b("dots") && pageCount() > 1) View.VISIBLE else View.GONE
+                  content.background = buildBackdrop()
 
-                  if (bar) {
-                      val sp = SpannableStringBuilder("G    Pesquisar")
-                      sp.setSpan(ForegroundColorSpan(0xFF4285F4.toInt()), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                      sp.setSpan(StyleSpan(Typeface.BOLD), 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                      pill.text = sp
-                      pill.textSize = 15f
-                      pill.gravity = Gravity.CENTER_VERTICAL
-                      pill.setTextColor(if (dark) Color.WHITE else 0xFF5F6368.toInt())
-                      pill.background = rounded(if (dark) 0xE61C1C1E.toInt() else 0xF2FFFFFF.toInt(), dp(26))
-                      pill.setPadding(dp(22), 0, dp(22), 0)
-                      pill.layoutParams = LinearLayout.LayoutParams(MATCH, dp(50)).apply {
-                          setMargins(dp(14), dp(4), dp(14), dp(2))
-                      }
-                  } else {
-                      pill.text = "🔍  Pesquisar"
-                      pill.textSize = 13f
-                      pill.gravity = Gravity.CENTER
-                      pill.setTextColor(Color.WHITE)
-                      pill.background = rounded(glass(25), dp(16))
-                      pill.setPadding(dp(18), dp(6), dp(18), dp(6))
-                      pill.layoutParams = LinearLayout.LayoutParams(WRAP, dp(32)).apply {
-                          gravity = Gravity.CENTER_HORIZONTAL
-                          bottomMargin = dp(10)
-                      }
+                  pill.text = "🔍  Pesquisar"
+                  pill.textSize = 13f
+                  pill.gravity = Gravity.CENTER
+                  pill.setTextColor(Color.WHITE)
+                  pill.background = rounded(glass(25), dp(16))
+                  pill.setPadding(dp(18), dp(6), dp(18), dp(6))
+                  pill.layoutParams = LinearLayout.LayoutParams(WRAP, dp(32)).apply {
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      bottomMargin = dp(10)
+                  }
+                  searchBar.background = rounded(if (dark) 0xE61C1C1E.toInt() else 0xF2FFFFFF.toInt(), dp(24))
+                  searchBar.layoutParams = LinearLayout.LayoutParams(MATCH, dp(46)).apply {
+                      setMargins(dp(14), dp(8), dp(14), dp(6))
                   }
 
-                  // Ordem das barras: One UI = busca, bolinhas, dock | iOS = bolinhas, busca, dock
+                  // Ordem: One UI = busca, bolinhas, dock | iOS = bolinhas, busca, dock
                   column.removeView(pill)
+                  column.removeView(searchBar)
                   column.removeView(barRow)
                   if (bar) {
-                      column.addView(pill, 1)
+                      column.addView(searchBar, 1)
                       column.addView(barRow, 2)
                   } else {
                       column.addView(barRow, 1)
                       column.addView(pill, 2)
                   }
-                  barRow.setOnLongClickListener {
+                  val menu = View.OnLongClickListener {
                       haptic(it)
                       openHomeMenu()
                       true
                   }
-                  dots.setOnLongClickListener {
-                      haptic(it)
-                      openHomeMenu()
-                      true
-                  }
-                  dock.setOnLongClickListener {
-                      haptic(it)
-                      openHomeMenu()
-                      true
-                  }
+                  barRow.setOnLongClickListener(menu)
+                  dots.setOnLongClickListener(menu)
+                  dock.setOnLongClickListener(menu)
+                  updateGear()
                   updatePill()
                   buildDock()
               }
@@ -2750,6 +3099,15 @@ jobs:
                   )
                   rowToggle(c, "Bolinhas das páginas", "dots")
                   rowSeek(c, "Escurecer o fundo", "dim", 0, 60, "%")
+                  rowChoice(
+                      c, "Papel de parede do launcher", "wallpaper",
+                      listOf("system" to "O do meu celular", "pink" to "Rosa (One UI)", "blue" to "Azul (iOS)")
+                  )
+                  rowChoice(
+                      c, "Widgets no topo da tela inicial", "homeHeader",
+                      listOf("none" to "Nenhum", "oneui" to "Resumo, temperatura e relógio (One UI)")
+                  )
+                  rowSeek(c, "Transparência das pastas", "folderAlpha", 0, 100, "%")
                   rowToggle(c, "Mostrar a engrenagem na tela", "gear")
                   rowToggle(c, "Temperatura (°C) na tela inicial", "tempHome")
 
