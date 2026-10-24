@@ -270,6 +270,7 @@ jobs:
                   "animStyle" to "ios",
                   "dim" to 0,
                   "gear" to true,
+                  "tempHome" to true,
                   "wClock" to true,
                   "wCal" to true,
                   "wBat" to true,
@@ -331,66 +332,6 @@ jobs:
                   }
                   e.putString("skin", name)
                   e.apply()
-              }
-          }
-          EOF_FILE
-          cat > proj/app/src/main/java/com/ioslauncher/Gauge.kt <<'EOF_FILE'
-          package com.ioslauncher
-
-          import android.content.Context
-          import android.graphics.Canvas
-          import android.graphics.Color
-          import android.graphics.Paint
-          import android.graphics.RectF
-          import android.graphics.Typeface
-          import android.view.View
-
-          class GaugeView(ctx: Context) : View(ctx) {
-              var value = 0f
-              var minV = 15f
-              var maxV = 55f
-              var title = ""
-
-              private val track = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val arc = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val txt = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val sub = Paint(Paint.ANTI_ALIAS_FLAG)
-              private val rect = RectF()
-
-              init {
-                  track.style = Paint.Style.STROKE
-                  track.strokeCap = Paint.Cap.ROUND
-                  track.color = 0x33FFFFFF
-                  arc.style = Paint.Style.STROKE
-                  arc.strokeCap = Paint.Cap.ROUND
-                  txt.color = Color.WHITE
-                  txt.textAlign = Paint.Align.CENTER
-                  txt.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
-                  sub.color = 0xFFBBBBBB.toInt()
-                  sub.textAlign = Paint.Align.CENTER
-              }
-
-              override fun onDraw(c: Canvas) {
-                  val s = Math.min(width, height).toFloat()
-                  val stroke = s * 0.09f
-                  val ox = (width - s) / 2f
-                  val oy = (height - s) / 2f
-                  track.strokeWidth = stroke
-                  arc.strokeWidth = stroke
-                  rect.set(ox + stroke, oy + stroke, ox + s - stroke, oy + s - stroke)
-                  c.drawArc(rect, 150f, 240f, false, track)
-                  val f = ((value - minV) / (maxV - minV)).coerceIn(0.02f, 1f)
-                  arc.color = when {
-                      f < 0.45f -> 0xFF34C759.toInt()
-                      f < 0.7f -> 0xFFFF9F0A.toInt()
-                      else -> 0xFFFF3B30.toInt()
-                  }
-                  c.drawArc(rect, 150f, 240f * f, false, arc)
-                  txt.textSize = s * 0.28f
-                  val cy = oy + s / 2f
-                  c.drawText("${value.toInt()}°", width / 2f, cy + txt.textSize * 0.28f, txt)
-                  sub.textSize = s * 0.11f
-                  c.drawText(title, width / 2f, oy + s - stroke * 0.9f, sub)
               }
           }
           EOF_FILE
@@ -521,6 +462,21 @@ jobs:
                       r
                   }
                   canvas.drawBitmap(b, null, bounds, paint)
+              }
+
+              // Cada ImageView precisa do seu proprio Drawable (o tamanho fica guardado nele)
+              override fun getConstantState(): Drawable.ConstantState? {
+                  val owner = this
+                  return object : Drawable.ConstantState() {
+                      override fun newDrawable(): Drawable {
+                          val d = IosIcon(owner.kind, owner.base, owner.shape, owner.iconSet)
+                          d.cache = owner.cache
+                          d.cacheStamp = owner.cacheStamp
+                          return d
+                      }
+
+                      override fun getChangingConfigurations(): Int = 0
+                  }
               }
 
               override fun setAlpha(alpha: Int) {
@@ -999,6 +955,8 @@ jobs:
               private var drawerScroll: ScrollView? = null
               private lateinit var gearBtn: TextView
               private lateinit var column: LinearLayout
+              private lateinit var barRow: FrameLayout
+              private lateinit var tempView: TextView
               private val springOut = PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
 
               private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -1061,7 +1019,9 @@ jobs:
                   column.addView(pager, LinearLayout.LayoutParams(MATCH, 0, 1f))
 
                   dots = LinearLayout(this).apply { gravity = Gravity.CENTER }
-                  column.addView(dots, LinearLayout.LayoutParams(MATCH, dp(20)))
+                  barRow = FrameLayout(this)
+                  barRow.addView(dots, FrameLayout.LayoutParams(MATCH, MATCH))
+                  column.addView(barRow, LinearLayout.LayoutParams(MATCH, dp(28)))
 
                   pill = TextView(this).apply {
                       text = "🔍  Pesquisar"
@@ -1105,15 +1065,23 @@ jobs:
 
                   gearBtn = TextView(this).apply {
                       text = "\u2699\uFE0E"
-                      textSize = 20f
+                      textSize = 16f
                       setTextColor(Color.WHITE)
-                      setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
                       gravity = Gravity.CENTER
-                      background = rounded(0x33000000, dp(18))
+                      background = rounded(0x44000000, dp(13))
                       setOnClickListener { openSettings() }
                   }
-                  content.addView(gearBtn, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.START).apply {
-                      setMargins(dp(14), dp(6), 0, 0)
+                  barRow.addView(gearBtn, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                      setMargins(dp(16), 0, 0, 0)
+                  })
+                  tempView = TextView(this).apply {
+                      textSize = 13f
+                      setTextColor(Color.WHITE)
+                      setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
+                      typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                  }
+                  barRow.addView(tempView, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL).apply {
+                      setMargins(0, 0, dp(16), 0)
                   })
 
                   setContentView(content)
@@ -1146,6 +1114,11 @@ jobs:
                   })
               }
 
+              override fun onPause() {
+                  super.onPause()
+                  content.removeCallbacks(tick)
+              }
+
               override fun onDestroy() {
                   super.onDestroy()
                   bg.shutdown()
@@ -1159,6 +1132,8 @@ jobs:
               override fun onResume() {
                   super.onResume()
                   dismissLaunch(true)
+                  content.removeCallbacks(tick)
+                  content.post(tick)
                   refresh()
                   if (loaded && todayOn()) pager.postDelayed({ pager.adapter?.notifyItemChanged(0) }, 500)
               }
@@ -1435,7 +1410,7 @@ jobs:
                   val vl = IntArray(2)
                   v.getLocationOnScreen(vl)
                   val iv = ImageView(this)
-                  iv.setImageDrawable(a.icon)
+                  iv.setImageDrawable(a.icon.constantState?.newDrawable() ?: a.icon)
                   iv.scaleType = ImageView.ScaleType.FIT_XY
                   val lp = FrameLayout.LayoutParams(v.width, v.height)
                   lp.leftMargin = vl[0] - cl[0] - content.paddingLeft
@@ -1524,7 +1499,7 @@ jobs:
 
               private fun roundIcon(d: Drawable, size: Int): ImageView {
                   return ImageView(this).apply {
-                      setImageDrawable(d)
+                      setImageDrawable(d.constantState?.newDrawable() ?: d)
                       scaleType = ImageView.ScaleType.FIT_XY
                   }
               }
@@ -2019,20 +1994,19 @@ jobs:
                       col.addView(lk, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
                   }
 
-                  // Medidor de temperatura (bateria)
+                  // Temperatura da bateria em graus Celsius
                   if (Cfg.b("wTemp")) {
                       val temp = (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
                       val tc = LinearLayout(this).apply {
                           orientation = LinearLayout.VERTICAL
-                          gravity = Gravity.CENTER_HORIZONTAL
                           background = rounded(0x99000000.toInt(), dp(22))
-                          setPadding(dp(16), dp(14), dp(16), dp(10))
+                          setPadding(dp(16), dp(14), dp(16), dp(14))
                       }
                       tc.addView(tv("Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
-                      val g = GaugeView(this)
-                      g.value = temp
-                      g.title = "Bateria"
-                      tc.addView(g, LinearLayout.LayoutParams(dp(150), dp(140)))
+                      tc.addView(tv(String.format(Locale.getDefault(), "%.1f °C", temp), 44f, Color.WHITE).apply {
+                          typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                      })
+                      tc.addView(tv("Temperatura da bateria", 13f, 0xFFBBBBBB.toInt()))
                       col.addView(tc, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
                   }
 
@@ -2473,9 +2447,27 @@ jobs:
               }
 
               private fun updateGear() {
-                  if (!::gearBtn.isInitialized) return
-                  val onFirst = homePages.isNotEmpty() && pager.currentItem == firstHome()
-                  gearBtn.visibility = if (Cfg.b("gear") && !editing && onFirst) View.VISIBLE else View.GONE
+                  if (!::gearBtn.isInitialized || !::tempView.isInitialized) return
+                  val show = homePages.isNotEmpty() && pager.currentItem == firstHome() && !editing
+                  gearBtn.visibility = if (Cfg.b("gear") && show) View.VISIBLE else View.GONE
+                  tempView.visibility = if (Cfg.b("tempHome") && show) View.VISIBLE else View.GONE
+              }
+
+              private fun readTemp(): Float {
+                  val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                  return (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+              }
+
+              private fun updateTemp() {
+                  if (!::tempView.isInitialized) return
+                  tempView.text = String.format(Locale.getDefault(), "🌡 %.1f °C", readTemp())
+              }
+
+              private val tick = object : Runnable {
+                  override fun run() {
+                      updateTemp()
+                      content.postDelayed(this, 15000)
+                  }
               }
 
               private fun glass(pct: Int): Int {
@@ -2520,13 +2512,18 @@ jobs:
 
                   // Ordem das barras: One UI = busca, bolinhas, dock | iOS = bolinhas, busca, dock
                   column.removeView(pill)
-                  column.removeView(dots)
+                  column.removeView(barRow)
                   if (bar) {
                       column.addView(pill, 1)
-                      column.addView(dots, 2)
+                      column.addView(barRow, 2)
                   } else {
-                      column.addView(dots, 1)
+                      column.addView(barRow, 1)
                       column.addView(pill, 2)
+                  }
+                  barRow.setOnLongClickListener {
+                      haptic(it)
+                      openHomeMenu()
+                      true
                   }
                   dots.setOnLongClickListener {
                       haptic(it)
@@ -2754,6 +2751,7 @@ jobs:
                   rowToggle(c, "Bolinhas das páginas", "dots")
                   rowSeek(c, "Escurecer o fundo", "dim", 0, 60, "%")
                   rowToggle(c, "Mostrar a engrenagem na tela", "gear")
+                  rowToggle(c, "Temperatura (°C) na tela inicial", "tempHome")
 
                   c = section(list, "PÁGINAS")
                   rowToggle(c, "Página Hoje (Samsung Free)", "today")
@@ -2763,7 +2761,7 @@ jobs:
                   rowToggle(c, "Widget de bateria", "wBat")
                   rowToggle(c, "Widget de armazenamento", "wSto")
                   rowToggle(c, "Atalhos para as configurações", "wLinks")
-                  rowToggle(c, "Medidor de temperatura", "wTemp")
+                  rowToggle(c, "Temperatura (°C) na página Hoje", "wTemp")
 
                   c = section(list, "FUNÇÕES E GESTOS")
                   rowToggle(c, "Deslizar para baixo abre a pesquisa", "swipeSearch")
