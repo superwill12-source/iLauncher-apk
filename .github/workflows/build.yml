@@ -83,6 +83,8 @@ jobs:
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
               <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
               <queries>
                   <intent>
@@ -271,6 +273,8 @@ jobs:
                   "dim" to 0,
                   "gear" to true,
                   "tempHome" to true,
+                  "weather" to true,
+                  "gearStyle" to "icon",
                   "homeHeader" to "none",
                   "folderAlpha" to 40,
                   "wallpaper" to "system",
@@ -322,7 +326,8 @@ jobs:
                       "minimal" -> mapOf(
                           "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
                           "dots" to false, "today" to false, "dockAlpha" to 20
-                      )
+                      ,
+                          "gear" to true, "gearStyle" to "text")
                       else -> emptyMap()
                   }
                   val e = sp.edit()
@@ -336,6 +341,78 @@ jobs:
                   }
                   e.putString("skin", name)
                   e.apply()
+              }
+          }
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/Weather.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.content.Context
+          import java.util.Locale
+
+          // Dados do tempo (Open-Meteo, gratuito e sem chave de acesso)
+          object Weather {
+              @Volatile var temp = Float.NaN
+              @Volatile var max = Float.NaN
+              @Volatile var min = Float.NaN
+              @Volatile var code = -1
+              @Volatile var isDay = true
+              @Volatile var city = ""
+              @Volatile var updated = 0L
+
+              fun has(): Boolean = !temp.isNaN()
+
+              fun load(ctx: Context) {
+                  val sp = ctx.getSharedPreferences("weather", Context.MODE_PRIVATE)
+                  if (!sp.contains("temp")) return
+                  temp = sp.getFloat("temp", Float.NaN)
+                  max = sp.getFloat("max", Float.NaN)
+                  min = sp.getFloat("min", Float.NaN)
+                  code = sp.getInt("code", -1)
+                  isDay = sp.getBoolean("day", true)
+                  city = sp.getString("city", "") ?: ""
+                  updated = sp.getLong("updated", 0L)
+              }
+
+              fun save(ctx: Context) {
+                  ctx.getSharedPreferences("weather", Context.MODE_PRIVATE).edit()
+                      .putFloat("temp", temp)
+                      .putFloat("max", max)
+                      .putFloat("min", min)
+                      .putInt("code", code)
+                      .putBoolean("day", isDay)
+                      .putString("city", city)
+                      .putLong("updated", updated)
+                      .apply()
+              }
+
+              fun fmt(v: Float): String =
+                  if (v.isNaN()) "--" else String.format(Locale.getDefault(), "%.0f", v)
+
+              fun describe(c: Int): String = when (c) {
+                  0 -> "Céu limpo"
+                  1 -> "Predomínio de sol"
+                  2 -> "Parcialmente nublado"
+                  3 -> "Nublado"
+                  45, 48 -> "Neblina"
+                  51, 53, 55, 56, 57 -> "Garoa"
+                  61, 63, 65, 66, 67 -> "Chuva"
+                  71, 73, 75, 77, 85, 86 -> "Neve"
+                  80, 81, 82 -> "Pancadas de chuva"
+                  95, 96, 99 -> "Tempestade"
+                  else -> "Tempo estável"
+              }
+
+              fun emoji(c: Int, day: Boolean): String = when (c) {
+                  0 -> if (day) "☀️" else "🌙"
+                  1, 2 -> if (day) "🌤️" else "☁️"
+                  3 -> "☁️"
+                  45, 48 -> "🌫️"
+                  51, 53, 55, 56, 57, 80, 81, 82 -> "🌦️"
+                  61, 63, 65, 66, 67 -> "🌧️"
+                  71, 73, 75, 77, 85, 86 -> "❄️"
+                  95, 96, 99 -> "⛈️"
+                  else -> "🌡️"
               }
           }
           EOF_FILE
@@ -1073,6 +1150,7 @@ jobs:
           import android.app.Activity
           import android.app.ActivityOptions
           import android.app.AlertDialog
+          import android.Manifest
           import android.content.ClipData
           import android.content.Intent
           import android.content.IntentFilter
@@ -1085,6 +1163,9 @@ jobs:
           import android.graphics.drawable.Drawable
           import android.graphics.drawable.LayerDrawable
           import android.graphics.drawable.GradientDrawable
+          import android.location.Geocoder
+          import android.location.Location
+          import android.location.LocationManager
           import android.net.Uri
           import android.os.BatteryManager
           import android.os.Bundle
@@ -1185,6 +1266,9 @@ jobs:
               private var maxPagerH = 0
               private var refreshGen = 0
               private val bg = java.util.concurrent.Executors.newSingleThreadExecutor()
+              private val net = java.util.concurrent.Executors.newSingleThreadExecutor()
+              private var chromeBar: Boolean? = null
+              private var gearStyleApplied = ""
               private var dragEntry: Entry? = null
               private var dragSource: View? = null
               private var lastFlip = 0L
@@ -1219,6 +1303,7 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   Cfg.init(this)
+                  Weather.load(this)
                   store = Store(this)
                   WindowCompat.setDecorFitsSystemWindows(window, false)
 
@@ -1372,14 +1457,10 @@ jobs:
                   })
               }
 
-              override fun onPause() {
-                  super.onPause()
-                  content.removeCallbacks(tick)
-              }
-
               override fun onDestroy() {
                   super.onDestroy()
                   bg.shutdown()
+                  net.shutdown()
               }
 
               override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
@@ -1390,10 +1471,13 @@ jobs:
               override fun onResume() {
                   super.onResume()
                   dismissLaunch(true)
-                  content.removeCallbacks(tick)
-                  content.post(tick)
                   refresh()
                   if (loaded && todayOn()) pager.postDelayed({ pager.adapter?.notifyItemChanged(0) }, 500)
+                  content.postDelayed({
+                      refreshWeather(false)
+                      askLocationOnce()
+                      showTipOnce()
+                  }, 1200)
               }
 
               override fun onNewIntent(intent: Intent?) {
@@ -1685,6 +1769,7 @@ jobs:
                       .setInterpolator(springOut)
                       .start()
                   val homeScale = if (Cfg.s("animStyle") == "ios") 1.18f else 1.04f
+                  column.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                   column.animate().scaleX(homeScale).scaleY(homeScale).alpha(0f).setDuration(320)
                       .setInterpolator(springOut).start()
                   iv.postDelayed({ startApp(a, opts) }, 120)
@@ -1696,13 +1781,16 @@ jobs:
                   launchOverlay = null
                   if (animate) {
                       column.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(340)
-                          .setInterpolator(springOut).start()
+                          .setInterpolator(springOut)
+                          .withEndAction { column.setLayerType(View.LAYER_TYPE_NONE, null) }
+                          .start()
                       iv.animate().scaleX(1f).scaleY(1f).alpha(0f).setDuration(320)
                           .setInterpolator(springOut)
                           .withEndAction { content.removeView(iv) }
                           .start()
                   } else {
                       column.animate().cancel()
+                      column.setLayerType(View.LAYER_TYPE_NONE, null)
                       column.scaleX = 1f
                       column.scaleY = 1f
                       column.alpha = 1f
@@ -1717,7 +1805,8 @@ jobs:
                       normalize()
                       saveAll()
                   }
-                  styleChrome()
+                  updateGear()
+                  updatePill()
                   rebuild()
               }
 
@@ -2143,7 +2232,7 @@ jobs:
                   }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
                   card.addView(
                       tv(
-                          String.format(Locale.getDefault(), "Tenha um dia especial. Bateria em %d%%, %.1f °C.", pct, temp),
+                          briefText(),
                           13f, 0xF2FFFFFF.toInt()
                       ).apply { setShadowLayer(3f, 0f, 1f, 0x44000000) },
                       LinearLayout.LayoutParams(MATCH, WRAP)
@@ -2161,11 +2250,15 @@ jobs:
                       ).apply { cornerRadius = dp(40).toFloat() }
                       setPadding(dp(14), 0, dp(14), 0)
                   }
-                  blue.addView(tv("🌡", 26f, Color.WHITE))
+                  blue.addView(tv(if (Weather.has()) Weather.emoji(Weather.code, Weather.isDay) else "🌡", 26f, Color.WHITE))
                   val bt = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-                  bt.addView(tv(String.format(Locale.getDefault(), "%.0f°", temp), 22f, Color.WHITE, true))
-                  bt.addView(tv("Bateria", 11f, 0xF2FFFFFF.toInt()))
+                  bt.addView(tv(Weather.fmt(Weather.temp) + "°", 22f, Color.WHITE, true))
+                  bt.addView(tv(if (Weather.city.isNotEmpty()) Weather.city else "Tempo", 11f, 0xF2FFFFFF.toInt()).apply {
+                      maxLines = 1
+                      ellipsize = TextUtils.TruncateAt.END
+                  })
                   blue.addView(bt, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
+                  blue.setOnClickListener { refreshWeather(true) }
 
                   val white = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
@@ -2286,78 +2379,34 @@ jobs:
                   })
                   if (row.childCount > 0) col.addView(row, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(16) })
 
-                  // Atalhos para as configurações
-                  if (Cfg.b("wLinks")) {
-                      val links = listOf(
-                          Triple("📶", "Wi-Fi", Settings.ACTION_WIFI_SETTINGS),
-                          Triple("🔵", "Bluetooth", Settings.ACTION_BLUETOOTH_SETTINGS),
-                          Triple("🔊", "Som", Settings.ACTION_SOUND_SETTINGS),
-                          Triple("☀️", "Tela", Settings.ACTION_DISPLAY_SETTINGS),
-                          Triple("🔋", "Bateria", Intent.ACTION_POWER_USAGE_SUMMARY),
-                          Triple("💾", "Armazenamento", Settings.ACTION_INTERNAL_STORAGE_SETTINGS),
-                          Triple("📱", "Apps", Settings.ACTION_APPLICATION_SETTINGS),
-                          Triple("✈️", "Modo avião", Settings.ACTION_AIRPLANE_MODE_SETTINGS),
-                          Triple("⚙️", "iLauncher", "")
-                      )
-                      val lk = LinearLayout(this).apply {
-                          orientation = LinearLayout.VERTICAL
-                          background = rounded(0x99000000.toInt(), dp(22))
-                          setPadding(dp(12), dp(14), dp(12), dp(8))
-                      }
-                      lk.addView(tv("Atalhos", 13f, 0xFFBBBBBB.toInt(), true).apply { setPadding(dp(4), 0, 0, dp(8)) })
-                      for (chunk in links.chunked(3)) {
-                          val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                          for (i in 0 until 3) {
-                              val item = chunk.getOrNull(i)
-                              if (item == null) {
-                                  r.addView(View(this), LinearLayout.LayoutParams(0, dp(64), 1f))
-                                  continue
-                              }
-                              val chip = LinearLayout(this).apply {
-                                  orientation = LinearLayout.VERTICAL
-                                  gravity = Gravity.CENTER
-                                  background = rounded(0x33FFFFFF, dp(14))
-                                  setPadding(dp(4), dp(6), dp(4), dp(6))
-                              }
-                              chip.addView(tv(item.first, 22f, Color.WHITE))
-                              chip.addView(tv(item.second, 11f, Color.WHITE).apply {
-                                  maxLines = 1
-                                  ellipsize = TextUtils.TruncateAt.END
-                              })
-                              chip.setOnClickListener {
-                                  if (item.third.isEmpty()) {
-                                      openSettings()
-                                  } else {
-                                      try {
-                                          startActivity(Intent(item.third))
-                                      } catch (_: Exception) {
-                                          Toast.makeText(this, "Não foi possível abrir", Toast.LENGTH_SHORT).show()
-                                      }
-                                  }
-                              }
-                              pressable(chip)
-                              r.addView(chip, LinearLayout.LayoutParams(0, dp(64), 1f).apply {
-                                  setMargins(dp(3), dp(3), dp(3), dp(3))
-                              })
-                          }
-                          lk.addView(r, LinearLayout.LayoutParams(MATCH, WRAP))
-                      }
-                      col.addView(lk, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
-                  }
-
-                  // Temperatura da bateria em graus Celsius
-                  if (Cfg.b("wTemp")) {
-                      val temp = (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
+                  // Temperatura ambiente (internet)
+                  if (Cfg.b("wTemp") && Cfg.b("weather")) {
                       val tc = LinearLayout(this).apply {
                           orientation = LinearLayout.VERTICAL
                           background = rounded(0x99000000.toInt(), dp(22))
                           setPadding(dp(16), dp(14), dp(16), dp(14))
                       }
-                      tc.addView(tv("Temperatura", 13f, 0xFFBBBBBB.toInt(), true))
-                      tc.addView(tv(String.format(Locale.getDefault(), "%.1f °C", temp), 44f, Color.WHITE).apply {
+                      val title = if (Weather.city.isNotEmpty()) "Temperatura · " + Weather.city else "Temperatura"
+                      tc.addView(tv(title, 13f, 0xFFBBBBBB.toInt(), true))
+                      val big = if (Weather.has()) {
+                          Weather.emoji(Weather.code, Weather.isDay) + " " + Weather.fmt(Weather.temp) + " °C"
+                      } else {
+                          "-- °C"
+                      }
+                      tc.addView(tv(big, 44f, Color.WHITE).apply {
                           typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
                       })
-                      tc.addView(tv("Temperatura da bateria", 13f, 0xFFBBBBBB.toInt()))
+                      val sub = if (Weather.has()) {
+                          Weather.describe(Weather.code) + " · Máx " + Weather.fmt(Weather.max) + "° · Mín " + Weather.fmt(Weather.min) + "°"
+                      } else {
+                          "Buscando o tempo... toque para atualizar"
+                      }
+                      tc.addView(tv(sub, 13f, 0xFFBBBBBB.toInt()))
+                      tc.setOnClickListener {
+                          Toast.makeText(this, "Atualizando temperatura...", Toast.LENGTH_SHORT).show()
+                          refreshWeather(true)
+                      }
+                      pressable(tc)
                       col.addView(tc, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = gap })
                   }
 
@@ -2802,28 +2851,173 @@ jobs:
 
               private fun updateGear() {
                   if (!::gearBtn.isInitialized || !::tempView.isInitialized) return
+                  val style = Cfg.s("gearStyle")
+                  if (style != gearStyleApplied) {
+                      gearStyleApplied = style
+                      if (style == "text") {
+                          gearBtn.text = "Configurações"
+                          gearBtn.textSize = 12f
+                          gearBtn.setPadding(dp(12), dp(4), dp(12), dp(4))
+                          gearBtn.layoutParams = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                              setMargins(dp(16), 0, 0, 0)
+                          }
+                      } else {
+                          gearBtn.text = "\u2699\uFE0E"
+                          gearBtn.textSize = 16f
+                          gearBtn.setPadding(0, 0, 0, 0)
+                          gearBtn.layoutParams = FrameLayout.LayoutParams(dp(26), dp(26), Gravity.START or Gravity.CENTER_VERTICAL).apply {
+                              setMargins(dp(16), 0, 0, 0)
+                          }
+                      }
+                  }
                   val show = homePages.isNotEmpty() && pager.currentItem == firstHome() && !editing
                   gearBtn.visibility = if (Cfg.b("gear") && show) View.VISIBLE else View.GONE
-                  tempView.visibility = if (Cfg.b("tempHome") && show) View.VISIBLE else View.GONE
+                  tempView.visibility = if (Cfg.b("tempHome") && Cfg.b("weather") && show) View.VISIBLE else View.GONE
                   barRow.visibility = if (dots.visibility == View.VISIBLE || gearBtn.visibility == View.VISIBLE ||
                       tempView.visibility == View.VISIBLE) View.VISIBLE else View.GONE
               }
 
-              private fun readTemp(): Float {
-                  val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-                  return (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
-              }
+              // ---------- Tempo (Open-Meteo, gratuito) ----------
 
               private fun updateTemp() {
                   if (!::tempView.isInitialized) return
-                  tempView.text = String.format(Locale.getDefault(), "🌡 %.1f °C", readTemp())
+                  tempView.text = if (Weather.has()) {
+                      Weather.emoji(Weather.code, Weather.isDay) + " " + Weather.fmt(Weather.temp) + " °C"
+                  } else {
+                      "☁ -- °C"
+                  }
               }
 
-              private val tick = object : Runnable {
-                  override fun run() {
-                      updateTemp()
-                      content.postDelayed(this, 15000)
+              private fun hasLocPerm() =
+                  checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+              private fun askLocation() {
+                  requestPermissions(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION), 77)
+              }
+
+              override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+                  super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+                  if (requestCode == 77) refreshWeather(true)
+              }
+
+              private fun askLocationOnce() {
+                  if (!Cfg.b("weather") || hasLocPerm()) return
+                  val sp = getSharedPreferences("misc", MODE_PRIVATE)
+                  if (sp.getBoolean("askedLoc", false)) return
+                  sp.edit().putBoolean("askedLoc", true).apply()
+                  val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                      .setTitle("Temperatura da sua região")
+                      .setMessage("Para mostrar a temperatura de onde você está, permita o acesso à localização aproximada. Se preferir não permitir, o launcher usa uma localização estimada pela internet.")
+                      .setPositiveButton("Permitir") { _, _ -> askLocation() }
+                      .setNegativeButton("Agora não", null)
+                      .create()
+                  dlg.show()
+                  dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+              }
+
+              private fun showTipOnce() {
+                  val sp = getSharedPreferences("misc", MODE_PRIVATE)
+                  if (sp.getBoolean("tip", false)) return
+                  sp.edit().putBoolean("tip", true).apply()
+                  Toast.makeText(
+                      this,
+                      "Dica: segure o dedo num espaço vazio da tela para abrir os ajustes.",
+                      Toast.LENGTH_LONG
+                  ).show()
+              }
+
+              private fun httpGet(u: String): String {
+                  val c = java.net.URL(u).openConnection() as java.net.HttpURLConnection
+                  c.connectTimeout = 8000
+                  c.readTimeout = 8000
+                  c.setRequestProperty("User-Agent", "iLauncher/2.0")
+                  try {
+                      return c.inputStream.bufferedReader().use { it.readText() }
+                  } finally {
+                      c.disconnect()
                   }
+              }
+
+              private fun lastLocation(): Location? {
+                  val lm = getSystemService(LOCATION_SERVICE) as LocationManager
+                  var best: Location? = null
+                  for (prov in lm.getProviders(true)) {
+                      val l = try {
+                          lm.getLastKnownLocation(prov)
+                      } catch (_: SecurityException) {
+                          null
+                      }
+                      val cur = best
+                      if (l != null && (cur == null || l.time > cur.time)) best = l
+                  }
+                  return best
+              }
+
+              private fun cityName(lat: Double, lon: Double): String {
+                  return try {
+                      val g = Geocoder(this, Locale.getDefault())
+                      @Suppress("DEPRECATION")
+                      val list = g.getFromLocation(lat, lon, 1)
+                      val a = list?.firstOrNull()
+                      a?.locality ?: a?.subAdminArea ?: ""
+                  } catch (_: Exception) {
+                      ""
+                  }
+              }
+
+              private fun refreshWeather(force: Boolean) {
+                  if (!Cfg.b("weather")) return
+                  val fresh = System.currentTimeMillis() - Weather.updated < 20 * 60 * 1000L
+                  if (!force && fresh && Weather.has()) return
+                  net.execute {
+                      try {
+                          var lat = Double.NaN
+                          var lon = Double.NaN
+                          var city = ""
+                          if (hasLocPerm()) {
+                              val loc = lastLocation()
+                              if (loc != null) {
+                                  lat = loc.latitude
+                                  lon = loc.longitude
+                                  city = cityName(lat, lon)
+                              }
+                          }
+                          if (lat.isNaN() || lon.isNaN()) {
+                              val ip = org.json.JSONObject(httpGet("https://ipwho.is/"))
+                              lat = ip.getDouble("latitude")
+                              lon = ip.getDouble("longitude")
+                              city = ip.optString("city", "")
+                          }
+                          val url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
+                              "&current=temperature_2m,weather_code,is_day" +
+                              "&daily=temperature_2m_max,temperature_2m_min&forecast_days=1&timezone=auto"
+                          val j = org.json.JSONObject(httpGet(url))
+                          val cur = j.getJSONObject("current")
+                          val daily = j.getJSONObject("daily")
+                          Weather.temp = cur.getDouble("temperature_2m").toFloat()
+                          Weather.code = cur.optInt("weather_code", -1)
+                          Weather.isDay = cur.optInt("is_day", 1) == 1
+                          Weather.max = daily.getJSONArray("temperature_2m_max").getDouble(0).toFloat()
+                          Weather.min = daily.getJSONArray("temperature_2m_min").getDouble(0).toFloat()
+                          Weather.city = city
+                          Weather.updated = System.currentTimeMillis()
+                          Weather.save(applicationContext)
+                          runOnUiThread { onWeatherUpdated() }
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun onWeatherUpdated() {
+                  updateTemp()
+                  if (todayOn()) pager.adapter?.notifyItemChanged(0)
+                  if (headerActive()) pager.adapter?.notifyItemChanged(firstHome())
+              }
+
+              private fun briefText(): String {
+                  if (!Weather.has()) return "Tenha um dia especial."
+                  return "Tenha um dia especial. " + Weather.describe(Weather.code) + ". Máxima de " +
+                      Weather.fmt(Weather.max) + "° e mínima de " + Weather.fmt(Weather.min) + "°."
               }
 
               private fun glass(pct: Int): Int {
@@ -2865,15 +3059,18 @@ jobs:
                   }
 
                   // Ordem: One UI = busca, bolinhas, dock | iOS = bolinhas, busca, dock
-                  column.removeView(pill)
-                  column.removeView(searchBar)
-                  column.removeView(barRow)
-                  if (bar) {
-                      column.addView(searchBar, 1)
-                      column.addView(barRow, 2)
-                  } else {
-                      column.addView(barRow, 1)
-                      column.addView(pill, 2)
+                  if (chromeBar != bar) {
+                      chromeBar = bar
+                      column.removeView(pill)
+                      column.removeView(searchBar)
+                      column.removeView(barRow)
+                      if (bar) {
+                          column.addView(searchBar, 1)
+                          column.addView(barRow, 2)
+                      } else {
+                          column.addView(barRow, 1)
+                          column.addView(pill, 2)
+                      }
                   }
                   val menu = View.OnLongClickListener {
                       haptic(it)
@@ -2885,6 +3082,7 @@ jobs:
                   dock.setOnLongClickListener(menu)
                   updateGear()
                   updatePill()
+                  updateTemp()
                   buildDock()
               }
 
@@ -3108,8 +3306,12 @@ jobs:
                       listOf("none" to "Nenhum", "oneui" to "Resumo, temperatura e relógio (One UI)")
                   )
                   rowSeek(c, "Transparência das pastas", "folderAlpha", 0, 100, "%")
-                  rowToggle(c, "Mostrar a engrenagem na tela", "gear")
-                  rowToggle(c, "Temperatura (°C) na tela inicial", "tempHome")
+                  rowToggle(c, "Mostrar atalho dos ajustes", "gear")
+                  rowChoice(
+                      c, "Aparência do atalho dos ajustes", "gearStyle",
+                      listOf("icon" to "Engrenagem", "text" to "Texto \"Configurações\"")
+                  )
+                  rowToggle(c, "Temperatura na tela inicial", "tempHome")
 
                   c = section(list, "PÁGINAS")
                   rowToggle(c, "Página Hoje (Samsung Free)", "today")
@@ -3118,8 +3320,7 @@ jobs:
                   rowToggle(c, "Widget de calendário", "wCal")
                   rowToggle(c, "Widget de bateria", "wBat")
                   rowToggle(c, "Widget de armazenamento", "wSto")
-                  rowToggle(c, "Atalhos para as configurações", "wLinks")
-                  rowToggle(c, "Temperatura (°C) na página Hoje", "wTemp")
+                  rowToggle(c, "Temperatura na página Hoje", "wTemp")
 
                   c = section(list, "FUNÇÕES E GESTOS")
                   rowToggle(c, "Deslizar para baixo abre a pesquisa", "swipeSearch")
@@ -3134,6 +3335,36 @@ jobs:
                   rowToggle(c, "Animação ao abrir apps", "animLaunch")
                   rowToggle(c, "Animação ao tocar", "animPress")
                   rowToggle(c, "Efeito ao trocar de página", "animPage")
+
+                  c = section(list, "TEMPO E LOCALIZAÇÃO")
+                  rowToggle(c, "Mostrar temperatura do tempo (usa internet)", "weather")
+                  rowAction(c, "Atualizar temperatura agora") { refreshWeather(true) }
+                  rowAction(c, "Usar localização do GPS (mais precisa)") {
+                      if (hasLocPerm()) {
+                          Toast.makeText(this, "Já está ativado. Atualizando...", Toast.LENGTH_SHORT).show()
+                          refreshWeather(true)
+                      } else {
+                          askLocation()
+                      }
+                  }
+
+                  c = section(list, "AJUDA")
+                  rowAction(c, "Como usar o launcher") {
+                      val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                          .setTitle("Como usar")
+                          .setMessage(
+                              "• Segure um app: menu com opções\n" +
+                                  "• Segure um espaço vazio: abre os ajustes\n" +
+                                  "• Deslize para baixo (iPhone): pesquisa\n" +
+                                  "• Deslize para cima (One UI): gaveta de apps\n" +
+                                  "• Em modo de edição, arraste um app sobre outro para criar pasta\n" +
+                                  "• Toque na temperatura para atualizar"
+                          )
+                          .setPositiveButton("Entendi", null)
+                          .create()
+                      dlg.show()
+                      dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+                  }
 
                   c = section(list, "GERENCIAR")
                   rowAction(c, "Apps ocultos...") {
