@@ -122,6 +122,18 @@ jobs:
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
+                  <activity
+                      android:name=".SkinsActivity"
+                      android:exported="true"
+                      android:excludeFromRecents="true"
+                      android:label="Skins do iLauncher"
+                      android:taskAffinity=""
+                      android:theme="@android:style/Theme.NoDisplay">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
               </application>
           </manifest>
           EOF_FILE
@@ -236,6 +248,9 @@ jobs:
                   "ios" to "iOS (idêntico ao iPhone)",
                   "ios_dark" to "iOS Escuro",
                   "oneui" to "One UI (Samsung)",
+                  "hyperos" to "HyperOS (Xiaomi)",
+                  "miui" to "MIUI 14 (Xiaomi)",
+                  "poco" to "POCO Launcher (Xiaomi)",
                   "classic" to "Android clássico",
                   "minimal" to "Minimalista"
               )
@@ -274,6 +289,7 @@ jobs:
                   "gear" to true,
                   "tempHome" to true,
                   "weather" to true,
+                  "drawerTabs" to false,
                   "gearStyle" to "icon",
                   "homeHeader" to "none",
                   "folderAlpha" to 40,
@@ -317,6 +333,30 @@ jobs:
                           "wiggle" to false, "swipeSearch" to false, "animPage" to false,
                           "animPress" to true, "gear" to false, "tempHome" to false
                       )
+                      "hyperos" -> mapOf(
+                          "iconSet" to "miui", "shape" to "squircle", "iconSize" to 70,
+                          "cols" to 4, "rows" to 6, "labelSize" to 12,
+                          "dockMax" to 4, "dockAlpha" to 28, "dockRadius" to 30, "pill" to false,
+                          "homeHeader" to "xiaomi", "panelStyle" to "oneui", "folderStyle" to "grid3",
+                          "folderAlpha" to 55, "library" to false, "drawerGesture" to true,
+                          "animStyle" to "miui", "wiggle" to false, "swipeSearch" to false,
+                          "animPage" to false, "gear" to false, "tempHome" to false
+                      )
+                      "miui" -> mapOf(
+                          "iconSet" to "miui", "iconSize" to 68, "cols" to 4, "rows" to 6,
+                          "labelSize" to 12, "dockAlpha" to 30, "dockRadius" to 22, "pill" to false,
+                          "panelStyle" to "oneui", "folderStyle" to "grid3", "folderAlpha" to 50,
+                          "library" to false, "animStyle" to "miui", "wiggle" to false,
+                          "swipeSearch" to true, "animPage" to false, "gear" to false, "tempHome" to false
+                      )
+                      "poco" -> mapOf(
+                          "iconSet" to "miui", "iconSize" to 66, "cols" to 4, "rows" to 6,
+                          "labelSize" to 11, "tint" to "dark", "dockMax" to 5, "dockAlpha" to 40,
+                          "dockRadius" to 26, "pill" to false, "library" to false, "today" to false,
+                          "drawerGesture" to true, "drawerTabs" to true, "folderAlpha" to 45,
+                          "animStyle" to "miui", "wiggle" to false, "swipeSearch" to false,
+                          "animPage" to false, "gear" to false, "tempHome" to false
+                      )
                       "classic" -> mapOf(
                           "iconSet" to "original", "shape" to "circle", "iconSize" to 64, "cols" to 5,
                           "labelSize" to 12, "tint" to "dark", "dockAlpha" to 55, "today" to false,
@@ -327,7 +367,7 @@ jobs:
                           "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
                           "dots" to false, "today" to false, "dockAlpha" to 20
                       ,
-                          "gear" to true, "gearStyle" to "text")
+                          "gear" to false)
                       else -> emptyMap()
                   }
                   val e = sp.edit()
@@ -606,6 +646,26 @@ jobs:
               }
           }
           EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/SkinsActivity.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.os.Bundle
+
+          // Atalho "Skins do iLauncher" que aparece na lista de apps do celular (inclusive na Samsung)
+          class SkinsActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  startActivity(
+                      Intent(this, MainActivity::class.java)
+                          .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                          .putExtra("openSkins", true)
+                  )
+                  finish()
+              }
+          }
+          EOF_FILE
           cat > proj/app/src/main/java/com/ioslauncher/Icons.kt <<'EOF_FILE'
           package com.ioslauncher
 
@@ -632,7 +692,7 @@ jobs:
 
               fun build(label: String, pkg: String, base: Drawable): Drawable {
                   val st = Cfg.s("iconSet")
-                  val kind = if (st == "original") "default" else kindOf(label, pkg)
+                  val kind = if (pkg == "ilauncher.skins") "skins" else if (st == "original") "default" else kindOf(label, pkg)
                   return IosIcon(kind, base, Cfg.s("shape"), st)
               }
 
@@ -697,6 +757,7 @@ jobs:
           ) : Drawable() {
 
               private val oneui get() = iconSet == "oneui"
+              private val miui get() = iconSet == "miui"
 
 
               private val SIZE = 192
@@ -801,6 +862,7 @@ jobs:
                       "mail" -> mail(c)
                       "music" -> music(c)
                       "contacts" -> contacts(c)
+                      "skins" -> skins(c)
                       else -> wrap(c)
                   }
                   val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
@@ -894,7 +956,7 @@ jobs:
               // ---------- ícones estilo iOS ----------
 
               private fun phone(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFF4ADE80), k(0xFF16A34A)) else gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
+                  if (miui) gradient(c, k(0xFF3DD68C), k(0xFF16A870)) else if (oneui) gradient(c, k(0xFF4ADE80), k(0xFF16A34A)) else gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
                   val w = pt(Color.WHITE, 34f)
                   c.drawArc(RectF(70f, 26f, 230f, 186f), 85f, 100f, false, w)
                   val f = pt(Color.WHITE)
@@ -903,7 +965,7 @@ jobs:
               }
 
               private fun messages(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFFF4F7FF), k(0xFFDCE6FF)) else gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
+                  if (miui) gradient(c, k(0xFFFFA24D), k(0xFFFF7A00)) else if (oneui) gradient(c, k(0xFFF4F7FF), k(0xFFDCE6FF)) else gradient(c, k(0xFF6CEB7F), k(0xFF1DBA43))
                   val w = pt(if (oneui) k(0xFF3B6FF5) else Color.WHITE)
                   c.drawOval(RectF(40f, 50f, 216f, 180f), w)
                   val t = Path()
@@ -915,18 +977,18 @@ jobs:
               }
 
               private fun camera(c: Canvas) {
-                  gradient(c, k(0xFFE9E9EE), k(0xFFB4B4BA))
-                  val dark = pt(k(0xFF1C1C1E))
+                  if (miui) gradient(c, k(0xFF50545E), k(0xFF24272D)) else gradient(c, k(0xFFE9E9EE), k(0xFFB4B4BA))
+                  val dark = pt(if (miui) Color.WHITE else k(0xFF1C1C1E))
                   c.drawRoundRect(RectF(36f, 84f, 220f, 198f), 26f, 26f, dark)
                   c.drawRoundRect(RectF(92f, 64f, 148f, 96f), 10f, 10f, dark)
-                  c.drawCircle(128f, 142f, 42f, pt(k(0xFFCFCFD4), 10f))
-                  c.drawCircle(128f, 142f, 30f, pt(k(0xFF3A3A3C)))
+                  c.drawCircle(128f, 142f, 42f, pt(if (miui) k(0xFF50545E) else k(0xFFCFCFD4), 10f))
+                  c.drawCircle(128f, 142f, 30f, pt(if (miui) k(0xFF24272D) else k(0xFF3A3A3C)))
                   c.drawCircle(192f, 108f, 7f, pt(k(0xFFFFD60A)))
               }
 
               private fun settings(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFF2B2B30), k(0xFF0F0F12)) else gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
-                  val g = pt(if (oneui) Color.WHITE else k(0xFF3A3A3C))
+                  if (miui) gradient(c, k(0xFF5AA9FF), k(0xFF2F6BFF)) else if (oneui) gradient(c, k(0xFF2B2B30), k(0xFF0F0F12)) else gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
+                  val g = pt(if (oneui || miui) Color.WHITE else k(0xFF3A3A3C))
                   for (i in 0 until 8) {
                       c.save()
                       c.rotate(i * 45f, 128f, 128f)
@@ -934,7 +996,7 @@ jobs:
                       c.restore()
                   }
                   c.drawCircle(128f, 128f, 70f, g)
-                  c.drawCircle(128f, 128f, 32f, pt(if (oneui) k(0xFF17171A) else k(0xFFAEAEB2)))
+                  c.drawCircle(128f, 128f, 32f, pt(if (miui) k(0xFF3F6BFF) else if (oneui) k(0xFF17171A) else k(0xFFAEAEB2)))
               }
 
               private fun hand(c: Canvas, angle: Float, len: Float, w: Float, color: Int) {
@@ -1002,7 +1064,7 @@ jobs:
                       internet(c)
                       return
                   }
-                  gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
+                  if (miui) gradient(c, k(0xFF5AA9FF), k(0xFF2F6BFF)) else gradient(c, k(0xFF64D2FF), k(0xFF0A84FF))
                   c.drawCircle(128f, 128f, 96f, pt(Color.WHITE, 8f))
                   for (i in 0 until 12) {
                       c.save()
@@ -1029,6 +1091,21 @@ jobs:
               }
 
               private fun photos(c: Canvas) {
+                  if (miui) {
+                      gradient(c, k(0xFFFFD45E), k(0xFFFF8A00))
+                      c.drawCircle(178f, 84f, 24f, pt(Color.WHITE))
+                      val mt = Path()
+                      mt.moveTo(28f, 206f)
+                      mt.lineTo(100f, 112f)
+                      mt.lineTo(150f, 172f)
+                      mt.lineTo(190f, 132f)
+                      mt.lineTo(228f, 206f)
+                      mt.close()
+                      val mp = pt(Color.WHITE)
+                      mp.alpha = 235
+                      c.drawPath(mt, mp)
+                      return
+                  }
                   if (oneui) {
                       gradient(c, k(0xFFFF8FB8), k(0xFFFF4D8D))
                       val pc = listOf(
@@ -1077,6 +1154,15 @@ jobs:
               }
 
               private fun notes(c: Canvas) {
+                  if (miui) {
+                      gradient(c, k(0xFFFFD95E), k(0xFFFFB400))
+                      c.drawRoundRect(RectF(62f, 44f, 194f, 212f), 20f, 20f, pt(Color.WHITE))
+                      val ln = pt(k(0xFFFFB400), 8f)
+                      c.drawLine(88f, 96f, 168f, 96f, ln)
+                      c.drawLine(88f, 130f, 168f, 130f, ln)
+                      c.drawLine(88f, 164f, 140f, 164f, ln)
+                      return
+                  }
                   if (oneui) {
                       gradient(c, k(0xFFFF6B6B), k(0xFFE5383B))
                       c.drawRoundRect(RectF(62f, 44f, 194f, 212f), 20f, 20f, pt(Color.WHITE))
@@ -1092,6 +1178,15 @@ jobs:
                   c.drawLine(40f, 112f, 216f, 112f, line)
                   c.drawLine(40f, 152f, 216f, 152f, line)
                   c.drawLine(40f, 192f, 216f, 192f, line)
+              }
+
+              private fun skins(c: Canvas) {
+                  gradient(c, k(0xFF8B5CF6), k(0xFF5B21B6))
+                  c.drawRoundRect(RectF(52f, 52f, 204f, 204f), 40f, 40f, pt(Color.WHITE))
+                  val cols = listOf(k(0xFFFF5E7E), k(0xFFFFC857), k(0xFF4ADE80), k(0xFF60A5FA))
+                  for (i in 0 until 4) {
+                      c.drawCircle(96f + (i % 2) * 64f, 96f + (i / 2) * 64f, 24f, pt(cols[i]))
+                  }
               }
 
               private fun maps(c: Canvas) {
@@ -1135,7 +1230,7 @@ jobs:
               }
 
               private fun contacts(c: Canvas) {
-                  if (oneui) gradient(c, k(0xFFFFB84D), k(0xFFFF8A00)) else gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
+                  if (miui) gradient(c, k(0xFF6EA8FF), k(0xFF3B6FF5)) else if (oneui) gradient(c, k(0xFFFFB84D), k(0xFFFF8A00)) else gradient(c, k(0xFFC7C7CC), k(0xFF8E8E93))
                   val w = pt(Color.WHITE)
                   c.drawCircle(128f, 100f, 38f, w)
                   c.drawOval(RectF(58f, 150f, 198f, 270f), w)
@@ -1150,6 +1245,7 @@ jobs:
           import android.app.Activity
           import android.app.ActivityOptions
           import android.app.AlertDialog
+          import android.app.role.RoleManager
           import android.Manifest
           import android.content.ClipData
           import android.content.Intent
@@ -1168,6 +1264,7 @@ jobs:
           import android.location.LocationManager
           import android.net.Uri
           import android.os.BatteryManager
+          import android.os.Build
           import android.os.Bundle
           import android.os.Environment
           import android.os.StatFs
@@ -1195,6 +1292,7 @@ jobs:
           import android.widget.BaseAdapter
           import android.widget.EditText
           import android.widget.FrameLayout
+          import android.widget.HorizontalScrollView
           import android.widget.ImageView
           import android.widget.LinearLayout
           import android.widget.ListView
@@ -1285,6 +1383,7 @@ jobs:
               private lateinit var barRow: FrameLayout
               private lateinit var searchBar: LinearLayout
               private val HDR_ROWS = 2
+              private val SKINS_PKG = "ilauncher.skins"
               private lateinit var tempView: TextView
               private val springOut = PathInterpolator(0.2f, 0.9f, 0.25f, 1f)
 
@@ -1429,6 +1528,10 @@ jobs:
 
                   setContentView(content)
                   styleChrome()
+                  if (intent?.getBooleanExtra("openSkins", false) == true) {
+                      intent.removeExtra("openSkins")
+                      content.postDelayed({ openSkinPicker() }, 700)
+                  }
 
                   detector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
                       override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
@@ -1475,13 +1578,20 @@ jobs:
                   if (loaded && todayOn()) pager.postDelayed({ pager.adapter?.notifyItemChanged(0) }, 500)
                   content.postDelayed({
                       refreshWeather(false)
-                      askLocationOnce()
-                      showTipOnce()
+                      if (!askDefaultOnce()) {
+                          askLocationOnce()
+                          showTipOnce()
+                      }
                   }, 1200)
               }
 
               override fun onNewIntent(intent: Intent?) {
                   super.onNewIntent(intent)
+                  if (intent?.getBooleanExtra("openSkins", false) == true) {
+                      intent.removeExtra("openSkins")
+                      content.post { openSkinPicker() }
+                      return
+                  }
                   when {
                       settingsOverlay != null -> closeSettings()
                       drawerOverlay != null -> closeDrawer()
@@ -1557,6 +1667,9 @@ jobs:
                                   categoryOf(ri.activityInfo.applicationInfo, pk)
                               )
                           }
+                          val skIcon = Icons.build("Skins", SKINS_PKG, ColorDrawable(Color.TRANSPARENT))
+                          (skIcon as? IosIcon)?.prepare()
+                          m[SKINS_PKG] = AppItem("Skins", SKINS_PKG, Intent(), skIcon, "Utilidades")
                           runOnUiThread { if (gen == refreshGen) applyApps(m, sig) }
                       } catch (_: Exception) {
                       }
@@ -1609,7 +1722,7 @@ jobs:
                   }
                   for (a in sorted) {
                       if (a.pkg !in seen && a.pkg !in dockPkgs && a.pkg !in hidden) {
-                          cleaned.add(Entry.App(a.pkg))
+                          cleaned.add(if (a.pkg == SKINS_PKG) 0 else cleaned.size, Entry.App(a.pkg))
                           seen.add(a.pkg)
                       }
                   }
@@ -1717,6 +1830,10 @@ jobs:
               }
 
               private fun uninstall(pkg: String) {
+                  if (pkg == SKINS_PKG) {
+                      Toast.makeText(this, "Este atalho faz parte do launcher", Toast.LENGTH_SHORT).show()
+                      return
+                  }
                   try {
                       startActivity(Intent(Intent.ACTION_DELETE, Uri.parse("package:$pkg")))
                   } catch (_: Exception) {
@@ -1725,6 +1842,7 @@ jobs:
               }
 
               private fun appInfo(pkg: String) {
+                  if (pkg == SKINS_PKG) return
                   try {
                       startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))
                   } catch (_: Exception) {
@@ -1745,6 +1863,10 @@ jobs:
               }
 
               private fun launch(a: AppItem, v: View?) {
+                  if (a.pkg == SKINS_PKG) {
+                      openSkinPicker()
+                      return
+                  }
                   val opts = ActivityOptions.makeCustomAnimation(
                       this, android.R.anim.fade_in, android.R.anim.fade_out
                   ).toBundle()
@@ -1768,7 +1890,11 @@ jobs:
                   iv.animate().scaleX(big).scaleY(big).setDuration(380)
                       .setInterpolator(springOut)
                       .start()
-                  val homeScale = if (Cfg.s("animStyle") == "ios") 1.18f else 1.04f
+                  val homeScale = when (Cfg.s("animStyle")) {
+                      "ios" -> 1.18f
+                      "miui" -> 0.92f
+                      else -> 1.04f
+                  }
                   column.setLayerType(View.LAYER_TYPE_HARDWARE, null)
                   column.animate().scaleX(homeScale).scaleY(homeScale).alpha(0f).setDuration(320)
                       .setInterpolator(springOut).start()
@@ -1834,8 +1960,10 @@ jobs:
                       if (where == Where.FOLDER && folder != null) add("Tirar da pasta") { takeOutOfFolder(pkg, folder) }
                       if (onHome) add("Remover da Tela de Início") { hideApp(pkg) }
                       else if (pkg !in dockPkgs) add("Adicionar à Tela de Início") { addToHome(pkg) }
-                      add("Informações do app") { appInfo(pkg) }
-                      add("Apagar app") { uninstall(pkg) }
+                      if (pkg != SKINS_PKG) {
+                          add("Informações do app") { appInfo(pkg) }
+                          add("Apagar app") { uninstall(pkg) }
+                      }
                       add("Ajustes do iLauncher") { openSettings() }
                   }
               }
@@ -1962,7 +2090,7 @@ jobs:
                                   setOnClickListener {
                                       showMenu(a.label) {
                                           add("Remover da Tela de Início") { hideApp(a.pkg) }
-                                          add("Apagar app") { uninstall(a.pkg) }
+                                          if (a.pkg != SKINS_PKG) add("Apagar app") { uninstall(a.pkg) }
                                       }
                                   }
                               }
@@ -2196,7 +2324,45 @@ jobs:
 
               // ---------- Widgets no topo da tela inicial (estilo One UI) ----------
 
-              private fun buildHomeHeader(): View {
+              private fun buildHomeHeader(): View =
+                  if (Cfg.s("homeHeader") == "xiaomi") buildXiaomiHeader() else buildOneUiHeader()
+
+              private fun buildXiaomiHeader(): View {
+                  val box = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(16), dp(4), dp(16), dp(4))
+                  }
+                  box.addView(TextClock(this).apply {
+                      format24Hour = "HH:mm"
+                      format12Hour = "h:mm"
+                      textSize = 64f
+                      typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
+                      setTextColor(Color.WHITE)
+                      setShadowLayer(6f, 0f, 1f, 0x44000000)
+                      includeFontPadding = false
+                  }, LinearLayout.LayoutParams(WRAP, WRAP))
+                  box.addView(TextClock(this).apply {
+                      format24Hour = "EEEE, d 'de' MMMM"
+                      format12Hour = "EEEE, d 'de' MMMM"
+                      textSize = 15f
+                      setTextColor(Color.WHITE)
+                      setShadowLayer(4f, 0f, 1f, 0x44000000)
+                  }, LinearLayout.LayoutParams(WRAP, WRAP))
+                  val line = if (Weather.has()) {
+                      Weather.emoji(Weather.code, Weather.isDay) + " " + Weather.fmt(Weather.temp) + "°C · " +
+                          Weather.describe(Weather.code) + (if (Weather.city.isNotEmpty()) " · " + Weather.city else "")
+                  } else {
+                      "Buscando o tempo..."
+                  }
+                  box.addView(tv(line, 14f, Color.WHITE).apply {
+                      setShadowLayer(4f, 0f, 1f, 0x44000000)
+                      setOnClickListener { refreshWeather(true) }
+                  }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+                  return box
+              }
+
+              private fun buildOneUiHeader(): View {
                   val box = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setPadding(dp(6), dp(6), dp(6), dp(6))
@@ -2839,7 +3005,7 @@ jobs:
               private fun libOn() = Cfg.b("library")
               private fun firstHome() = if (todayOn()) 1 else 0
               private fun pageCount() = firstHome() + homePages.size + (if (libOn()) 1 else 0)
-              private fun headerActive() = Cfg.s("homeHeader") == "oneui" && rows - HDR_ROWS >= 1
+              private fun headerActive() = Cfg.s("homeHeader") != "none" && rows - HDR_ROWS >= 1
               private fun firstPageSize() = if (headerActive()) COLS * (rows - HDR_ROWS) else COLS * rows
               private fun pageEnd(hp: Int) = firstPageSize() + hp * (COLS * rows)
               private fun isHomePage(p: Int) = p >= firstHome() && p < firstHome() + homePages.size
@@ -2855,7 +3021,7 @@ jobs:
                   if (style != gearStyleApplied) {
                       gearStyleApplied = style
                       if (style == "text") {
-                          gearBtn.text = "Configurações"
+                          gearBtn.text = "Skins"
                           gearBtn.textSize = 12f
                           gearBtn.setPadding(dp(12), dp(4), dp(12), dp(4))
                           gearBtn.layoutParams = FrameLayout.LayoutParams(WRAP, WRAP, Gravity.START or Gravity.CENTER_VERTICAL).apply {
@@ -3107,8 +3273,77 @@ jobs:
                   if (key == "skin") settingsList?.let { buildSettings(it) }
               }
 
+              private fun openSkinPicker() {
+                  val cur = Cfg.s("skin")
+                  showMenu("Escolha a skin") {
+                      for ((id, name) in Cfg.SKINS) {
+                          add((if (id == cur) "✓ " else "") + name) {
+                              Cfg.applySkin(id)
+                              cfgChanged("skin")
+                          }
+                      }
+                      add("Mais ajustes...") { openSettings() }
+                  }
+              }
+
+              private fun isDefaultHome(): Boolean {
+                  val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                  val ri = packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)
+                  return ri?.activityInfo?.packageName == packageName
+              }
+
+              private fun openDefaultAppsSettings() {
+                  val actions = listOf(
+                      Settings.ACTION_HOME_SETTINGS,
+                      Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
+                      Settings.ACTION_SETTINGS
+                  )
+                  for (a in actions) {
+                      try {
+                          startActivity(Intent(a))
+                          return
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun requestDefaultHome() {
+                  try {
+                      if (Build.VERSION.SDK_INT >= 29) {
+                          val rm = getSystemService(RoleManager::class.java)
+                          if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_HOME)) {
+                              if (rm.isRoleHeld(RoleManager.ROLE_HOME)) {
+                                  Toast.makeText(this, "O iLauncher já é o launcher padrão", Toast.LENGTH_SHORT).show()
+                              } else {
+                                  startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_HOME), 55)
+                              }
+                              return
+                          }
+                      }
+                  } catch (_: Exception) {
+                  }
+                  openDefaultAppsSettings()
+              }
+
+              private fun askDefaultOnce(): Boolean {
+                  if (isDefaultHome()) return false
+                  val sp = getSharedPreferences("misc", MODE_PRIVATE)
+                  if (sp.getBoolean("askedHome", false)) return false
+                  sp.edit().putBoolean("askedHome", true).apply()
+                  val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                      .setTitle("Usar como tela inicial?")
+                      .setMessage("Para o iLauncher aparecer ao apertar o botão Home, defina-o como launcher padrão. Para voltar ao launcher anterior (Samsung, Xiaomi...), use Ajustes do iLauncher → \"Voltar ao launcher anterior\".")
+                      .setPositiveButton("Definir agora") { _, _ -> requestDefaultHome() }
+                      .setNegativeButton("Depois", null)
+                      .create()
+                  dlg.show()
+                  dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+                  return true
+              }
+
               private fun openHomeMenu() {
                   showMenu("Tela de Início") {
+                      add("Trocar skin") { openSkinPicker() }
                       add("Editar Tela de Início") { setEditing(true) }
                       add("Papéis de parede") {
                           try {
@@ -3261,7 +3496,10 @@ jobs:
                   c = section(list, "ÍCONES")
                   rowChoice(
                       c, "Estilo dos ícones", "iconSet",
-                      listOf("ios" to "Estilo iOS", "oneui" to "Estilo One UI", "original" to "Ícones originais")
+                      listOf(
+                          "ios" to "Estilo iOS", "oneui" to "Estilo One UI",
+                          "miui" to "Estilo Xiaomi", "original" to "Ícones originais"
+                      )
                   )
                   rowChoice(
                       c, "Formato", "shape",
@@ -3303,13 +3541,16 @@ jobs:
                   )
                   rowChoice(
                       c, "Widgets no topo da tela inicial", "homeHeader",
-                      listOf("none" to "Nenhum", "oneui" to "Resumo, temperatura e relógio (One UI)")
+                      listOf(
+                          "none" to "Nenhum", "oneui" to "Resumo, temperatura e relógio (One UI)",
+                          "xiaomi" to "Relógio e tempo grandes (Xiaomi)"
+                      )
                   )
                   rowSeek(c, "Transparência das pastas", "folderAlpha", 0, 100, "%")
                   rowToggle(c, "Mostrar atalho dos ajustes", "gear")
                   rowChoice(
                       c, "Aparência do atalho dos ajustes", "gearStyle",
-                      listOf("icon" to "Engrenagem", "text" to "Texto \"Configurações\"")
+                      listOf("icon" to "Engrenagem", "text" to "Texto \"Skins\"")
                   )
                   rowToggle(c, "Temperatura na tela inicial", "tempHome")
 
@@ -3325,12 +3566,13 @@ jobs:
                   c = section(list, "FUNÇÕES E GESTOS")
                   rowToggle(c, "Deslizar para baixo abre a pesquisa", "swipeSearch")
                   rowToggle(c, "Deslizar para cima abre a gaveta de apps", "drawerGesture")
+                  rowToggle(c, "Categorias na gaveta de apps", "drawerTabs")
                   rowToggle(c, "Criar pasta arrastando app sobre app", "folders")
                   rowToggle(c, "Ícones balançando ao editar", "wiggle")
                   rowToggle(c, "Vibração ao segurar", "haptics")
                   rowChoice(
                       c, "Estilo das animações", "animStyle",
-                      listOf("ios" to "iPhone", "oneui" to "One UI (Samsung)")
+                      listOf("ios" to "iPhone", "oneui" to "One UI (Samsung)", "miui" to "Xiaomi (MIUI/HyperOS)")
                   )
                   rowToggle(c, "Animação ao abrir apps", "animLaunch")
                   rowToggle(c, "Animação ao tocar", "animPress")
@@ -3404,11 +3646,10 @@ jobs:
                       Cfg.applySkin("ios")
                       cfgChanged("skin")
                   }
-                  rowAction(c, "Definir como launcher padrão") {
-                      try {
-                          startActivity(Intent(Settings.ACTION_HOME_SETTINGS))
-                      } catch (_: Exception) {
-                      }
+                  rowAction(c, "Definir como launcher padrão") { requestDefaultHome() }
+                  rowAction(c, "Voltar ao launcher anterior (Samsung, Xiaomi...)") {
+                      Toast.makeText(this, "Escolha o app de Tela inicial na lista", Toast.LENGTH_LONG).show()
+                      openDefaultAppsSettings()
                   }
                   rowAction(c, "Ajustes do Android") {
                       try {
@@ -3533,11 +3774,13 @@ jobs:
                   sv.isVerticalScrollBarEnabled = false
                   val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
                   sv.addView(grid, FrameLayout.LayoutParams(MATCH, WRAP))
-                  ov.addView(sv, LinearLayout.LayoutParams(MATCH, 0, 1f))
-
-                  fun fill(q: String) {
+                  var cat = ""
+                  var query = ""
+                  fun fill() {
                       grid.removeAllViews()
-                      val l = if (q.isEmpty()) sorted else sorted.filter { it.label.contains(q, ignoreCase = true) }
+                      var l: List<AppItem> = sorted
+                      if (cat.isNotEmpty()) l = l.filter { it.category == cat }
+                      if (query.isNotEmpty()) l = l.filter { it.label.contains(query, ignoreCase = true) }
                       val n = COLS
                       val cellW = resources.displayMetrics.widthPixels / n - dp(10)
                       for (chunk in l.chunked(n)) {
@@ -3556,8 +3799,45 @@ jobs:
                           grid.addView(row)
                       }
                   }
-                  fill("")
-                  et.doAfterTextChanged { fill(it?.toString().orEmpty().trim()) }
+                  if (Cfg.b("drawerTabs")) {
+                      val hs = HorizontalScrollView(this)
+                      hs.isHorizontalScrollBarEnabled = false
+                      val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      hs.addView(chips, FrameLayout.LayoutParams(WRAP, WRAP))
+                      val names = listOf("") + CATEGORIES.filter { nm -> sorted.any { it.category == nm } }
+                      val chipViews = mutableListOf<TextView>()
+                      fun paintChips() {
+                          for (i in names.indices) {
+                              val on = names[i] == cat
+                              chipViews[i].setTextColor(if (on) (if (dark) Color.BLACK else Color.WHITE) else txt)
+                              chipViews[i].background = rounded(
+                                  if (on) txt else (if (dark) 0x33FFFFFF else 0x14000000), dp(16)
+                              )
+                          }
+                      }
+                      for (nm in names) {
+                          val chip = TextView(this).apply {
+                              text = if (nm.isEmpty()) "Todos" else nm
+                              textSize = 13f
+                              setPadding(dp(14), dp(7), dp(14), dp(7))
+                          }
+                          chip.setOnClickListener {
+                              cat = nm
+                              paintChips()
+                              fill()
+                          }
+                          chipViews.add(chip)
+                          chips.addView(chip, LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(8) })
+                      }
+                      paintChips()
+                      ov.addView(hs, LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(dp(8), 0, dp(8), dp(8)) })
+                  }
+                  ov.addView(sv, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  fill()
+                  et.doAfterTextChanged {
+                      query = it?.toString().orEmpty().trim()
+                      fill()
+                  }
 
                   content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
                   ViewCompat.setOnApplyWindowInsetsListener(ov) { v, insets ->
