@@ -290,6 +290,7 @@ jobs:
                   "tempHome" to true,
                   "weather" to true,
                   "drawerTabs" to false,
+                  "dockStyle" to "glass",
                   "gearStyle" to "icon",
                   "homeHeader" to "none",
                   "folderAlpha" to 40,
@@ -324,7 +325,7 @@ jobs:
                   val over: Map<String, Any> = when (name) {
                       "ios_dark" -> mapOf("tint" to "dark", "dockAlpha" to 45, "dim" to 15)
                       "oneui" -> mapOf(
-                          "iconSet" to "oneui", "shape" to "squircle", "iconSize" to 68,
+                          "iconSet" to "oneui", "dockStyle" to "none", "shape" to "squircle", "iconSize" to 68,
                           "cols" to 4, "rows" to 5, "labelSize" to 11,
                           "dockMax" to 4, "dockAlpha" to 0, "dockRadius" to 28,
                           "pillStyle" to "bar", "panelStyle" to "oneui", "homeHeader" to "oneui",
@@ -334,7 +335,7 @@ jobs:
                           "animPress" to true, "gear" to false, "tempHome" to false
                       )
                       "hyperos" -> mapOf(
-                          "iconSet" to "miui", "shape" to "squircle", "iconSize" to 70,
+                          "iconSet" to "miui", "dockStyle" to "capsule", "shape" to "squircle", "iconSize" to 70,
                           "cols" to 4, "rows" to 6, "labelSize" to 12,
                           "dockMax" to 4, "dockAlpha" to 28, "dockRadius" to 30, "pill" to false,
                           "homeHeader" to "xiaomi", "panelStyle" to "oneui", "folderStyle" to "grid3",
@@ -343,14 +344,14 @@ jobs:
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "miui" -> mapOf(
-                          "iconSet" to "miui", "iconSize" to 68, "cols" to 4, "rows" to 6,
+                          "iconSet" to "miui", "dockStyle" to "flush", "iconSize" to 68, "cols" to 4, "rows" to 6,
                           "labelSize" to 12, "dockAlpha" to 30, "dockRadius" to 22, "pill" to false,
                           "panelStyle" to "oneui", "folderStyle" to "grid3", "folderAlpha" to 50,
                           "library" to false, "animStyle" to "miui", "wiggle" to false,
                           "swipeSearch" to true, "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "poco" -> mapOf(
-                          "iconSet" to "miui", "iconSize" to 66, "cols" to 4, "rows" to 6,
+                          "iconSet" to "miui", "dockStyle" to "dark", "iconSize" to 66, "cols" to 4, "rows" to 6,
                           "labelSize" to 11, "tint" to "dark", "dockMax" to 5, "dockAlpha" to 40,
                           "dockRadius" to 26, "pill" to false, "library" to false, "today" to false,
                           "drawerGesture" to true, "drawerTabs" to true, "folderAlpha" to 45,
@@ -358,13 +359,13 @@ jobs:
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "classic" -> mapOf(
-                          "iconSet" to "original", "shape" to "circle", "iconSize" to 64, "cols" to 5,
+                          "iconSet" to "original", "dockStyle" to "flush", "dockRadius" to 0, "shape" to "circle", "iconSize" to 64, "cols" to 5,
                           "labelSize" to 12, "tint" to "dark", "dockAlpha" to 55, "today" to false,
                           "pill" to false, "wiggle" to false, "animLaunch" to false, "animPage" to false,
                           "animPress" to false, "drawerGesture" to true
                       )
                       "minimal" -> mapOf(
-                          "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
+                          "dockStyle" to "none", "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
                           "dots" to false, "today" to false, "dockAlpha" to 20
                       ,
                           "gear" to false)
@@ -843,6 +844,7 @@ jobs:
                   c.drawRect(0f, 0f, 256f, 256f, p)
               }
 
+              @Synchronized
               private fun render(): Bitmap {
                   val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
                   val c = Canvas(raw)
@@ -1367,6 +1369,8 @@ jobs:
               private val net = java.util.concurrent.Executors.newSingleThreadExecutor()
               private var chromeBar: Boolean? = null
               private var gearStyleApplied = ""
+              private var dockStyleApplied = ""
+              private var cfgStamp = 0L
               private var dragEntry: Entry? = null
               private var dragSource: View? = null
               private var lastFlip = 0L
@@ -1758,7 +1762,7 @@ jobs:
               }
 
               private fun applyGrid() {
-                  if (pager.height > maxPagerH) maxPagerH = pager.height
+                  if (System.currentTimeMillis() - cfgStamp < 2000L || pager.height > maxPagerH) maxPagerH = pager.height
                   val h = maxPagerH
                   val fixed = Cfg.i("rows")
                   val newRows = if (fixed > 0) fixed else if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 6) else rows
@@ -2891,14 +2895,18 @@ jobs:
 
               private fun closeGroup() {
                   val ov = groupOverlay ?: return
+                  val f = groupFolder
                   hideKeyboard(ov)
                   groupOverlay = null
                   groupFolder = null
                   (ov as? ViewGroup)?.getChildAt(0)?.animate()?.scaleX(0.9f)?.scaleY(0.9f)?.setDuration(180)?.start()
                   ov.animate().alpha(0f).setDuration(180).withEndAction { content.removeView(ov) }.start()
-                  normalize()
-                  saveAll()
-                  rebuild()
+                  if (f != null) {
+                      if (f.name.isBlank()) f.name = "Pasta"
+                      normalize()
+                      saveAll()
+                      rebuild()
+                  }
               }
 
               private fun openSearch() {
@@ -3039,8 +3047,9 @@ jobs:
                   val show = homePages.isNotEmpty() && pager.currentItem == firstHome() && !editing
                   gearBtn.visibility = if (Cfg.b("gear") && show) View.VISIBLE else View.GONE
                   tempView.visibility = if (Cfg.b("tempHome") && Cfg.b("weather") && show) View.VISIBLE else View.GONE
-                  barRow.visibility = if (dots.visibility == View.VISIBLE || gearBtn.visibility == View.VISIBLE ||
-                      tempView.visibility == View.VISIBLE) View.VISIBLE else View.GONE
+                  val barNeeded = (Cfg.b("dots") && pageCount() > 1) || Cfg.b("gear") ||
+                      (Cfg.b("tempHome") && Cfg.b("weather"))
+                  barRow.visibility = if (barNeeded) View.VISIBLE else View.GONE
               }
 
               // ---------- Tempo (Open-Meteo, gratuito) ----------
@@ -3201,11 +3210,85 @@ jobs:
                   return if (wp == null) dimColor else LayerDrawable(arrayOf(wp, dimColor))
               }
 
+              // Cada skin tem um dock com formato proprio
+              private fun styleDock() {
+                  val style = Cfg.s("dockStyle")
+                  val a = Cfg.i("dockAlpha")
+                  val r = dp(Cfg.i("dockRadius")).toFloat()
+                  val d = GradientDrawable()
+                  var ml = 8
+                  var mr = 8
+                  var mb = 6
+                  var padTop = 12
+                  var padBottom = 12
+                  when (style) {
+                      "none" -> {
+                          d.setColor(Color.TRANSPARENT)
+                          ml = 12
+                          mr = 12
+                          mb = 4
+                          padTop = 8
+                          padBottom = 8
+                      }
+                      "capsule" -> {
+                          d.setColor(glass(a))
+                          d.cornerRadius = dp(44).toFloat()
+                          d.setStroke(dp(1), Color.argb(70, 255, 255, 255))
+                          ml = 16
+                          mr = 16
+                          mb = 10
+                      }
+                      "flush" -> {
+                          d.setColor(glass(a))
+                          d.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+                          ml = 0
+                          mr = 0
+                          mb = 0
+                          padBottom = 16
+                      }
+                      "dark" -> {
+                          d.setColor(Color.argb(a * 255 / 100, 18, 18, 22))
+                          d.cornerRadius = r
+                          d.setStroke(dp(1), Color.argb(46, 255, 255, 255))
+                          ml = 10
+                          mr = 10
+                          mb = 8
+                      }
+                      else -> {
+                          d.setColor(glass(a))
+                          d.cornerRadius = r
+                          if (Cfg.s("tint") != "dark") d.setStroke(dp(1), Color.argb(60, 255, 255, 255))
+                      }
+                  }
+                  dock.background = d
+                  dock.setPadding(dp(8), dp(padTop), dp(8), dp(padBottom))
+                  if (style != dockStyleApplied) {
+                      dockStyleApplied = style
+                      dock.layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                          setMargins(dp(ml), 0, dp(mr), dp(mb))
+                      }
+                  }
+              }
+
+              // Completa o dock quando a skin tem mais espaços
+              private fun fillDock() {
+                  val max = Cfg.i("dockMax")
+                  val prefer = listOf("phone", "messages", "browser", "camera", "photos", "contacts", "mail", "settings")
+                  for (kind in prefer) {
+                      if (dockPkgs.size >= max) break
+                      val a = sorted.firstOrNull {
+                          it.pkg != SKINS_PKG && it.pkg !in dockPkgs && Icons.kindOf(it.label, it.pkg) == kind
+                      } ?: continue
+                      removeFromHome(a.pkg)
+                      hidden.remove(a.pkg)
+                      dockPkgs.add(a.pkg)
+                  }
+              }
+
               private fun styleChrome() {
                   val bar = Cfg.s("pillStyle") == "bar"
                   val dark = Cfg.s("tint") == "dark"
-                  dock.background = rounded(glass(Cfg.i("dockAlpha")), dp(Cfg.i("dockRadius")))
-                  if (bar) dock.setPadding(dp(6), dp(8), dp(6), dp(8)) else dock.setPadding(dp(8), dp(12), dp(8), dp(12))
+                  styleDock()
                   dots.visibility = if (Cfg.b("dots") && pageCount() > 1) View.VISIBLE else View.GONE
                   content.background = buildBackdrop()
 
@@ -3253,6 +3336,11 @@ jobs:
               }
 
               private fun cfgChanged(key: String) {
+                  cfgStamp = System.currentTimeMillis()
+                  if (key == "weather") {
+                      updateTemp()
+                      refreshWeather(true)
+                  }
                   if (key == "shape" || key == "iconSet" || key == "skin") {
                       signature = ""
                       refresh()
@@ -3262,11 +3350,13 @@ jobs:
                           val p = dockPkgs.removeAt(dockPkgs.size - 1)
                           home.add(Entry.App(p))
                       }
+                      fillDock()
                       normalize()
                       saveAll()
                   }
                   styleChrome()
                   rebuild()
+                  content.post { applyGrid() }
                   if (key == "today" || key == "library" || key == "skin") {
                       pager.setCurrentItem(firstHome(), false)
                   }
@@ -3520,6 +3610,14 @@ jobs:
 
                   c = section(list, "DOCK E BARRAS")
                   rowToggle(c, "Mostrar dock", "dock")
+                  rowChoice(
+                      c, "Formato do dock", "dockStyle",
+                      listOf(
+                          "glass" to "Vidro arredondado (iPhone)", "none" to "Sem fundo (One UI)",
+                          "capsule" to "Cápsula flutuante (HyperOS)", "flush" to "Barra rente à borda (MIUI)",
+                          "dark" to "Vidro escuro (POCO)"
+                      )
+                  )
                   rowSeek(c, "Arredondamento do dock", "dockRadius", 0, 40, "")
                   rowChoice(
                       c, "Estilo do painel de pastas", "panelStyle",
