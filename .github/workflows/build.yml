@@ -351,7 +351,7 @@ jobs:
                           "swipeSearch" to true, "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "poco" -> mapOf(
-                          "iconSet" to "miui", "dockStyle" to "dark", "iconSize" to 66, "cols" to 4, "rows" to 6,
+                          "iconSet" to "poco", "dockStyle" to "dark", "iconSize" to 66, "cols" to 4, "rows" to 6,
                           "labelSize" to 11, "tint" to "dark", "dockMax" to 5, "dockAlpha" to 40,
                           "dockRadius" to 26, "pill" to false, "library" to false, "today" to false,
                           "drawerGesture" to true, "drawerTabs" to true, "folderAlpha" to 45,
@@ -365,7 +365,7 @@ jobs:
                           "animPress" to false, "drawerGesture" to true
                       )
                       "minimal" -> mapOf(
-                          "dockStyle" to "none", "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
+                          "iconSet" to "mono", "dockStyle" to "none", "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
                           "dots" to false, "today" to false, "dockAlpha" to 20
                       ,
                           "gear" to false)
@@ -675,15 +675,20 @@ jobs:
           import android.graphics.Canvas
           import android.graphics.Color
           import android.graphics.ColorFilter
+          import android.graphics.ColorMatrix
+          import android.graphics.ColorMatrixColorFilter
           import android.graphics.LinearGradient
           import android.graphics.Paint
           import android.graphics.Path
           import android.graphics.PixelFormat
+          import android.graphics.PorterDuff
+          import android.graphics.PorterDuffXfermode
           import android.graphics.RectF
           import android.graphics.Shader
           import android.graphics.Typeface
           import android.graphics.drawable.AdaptiveIconDrawable
           import android.graphics.drawable.Drawable
+          import android.os.Build
           import java.text.SimpleDateFormat
           import java.util.Calendar
           import java.util.Date
@@ -759,6 +764,8 @@ jobs:
 
               private val oneui get() = iconSet == "oneui"
               private val miui get() = iconSet == "miui"
+              private val poco get() = iconSet == "poco"
+              private val mono get() = iconSet == "mono"
 
 
               private val SIZE = 192
@@ -844,11 +851,7 @@ jobs:
                   c.drawRect(0f, 0f, 256f, 256f, p)
               }
 
-              @Synchronized
-              private fun render(): Bitmap {
-                  val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
-                  val c = Canvas(raw)
-                  c.scale(SIZE / 256f, SIZE / 256f)
+              private fun classic(c: Canvas) {
                   when (kind) {
                       "phone" -> phone(c)
                       "messages" -> messages(c)
@@ -866,6 +869,20 @@ jobs:
                       "contacts" -> contacts(c)
                       "skins" -> skins(c)
                       else -> wrap(c)
+                  }
+              }
+
+              @Synchronized
+              private fun render(): Bitmap {
+                  val raw = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+                  val c = Canvas(raw)
+                  c.scale(SIZE / 256f, SIZE / 256f)
+                  val special = kind == "phone" || kind == "messages" || kind == "camera" || kind == "settings" ||
+                      kind == "browser" || kind == "photos" || kind == "calendar" || kind == "notes"
+                  when {
+                      kind == "default" -> if (mono) monoWrap(c) else wrap(c)
+                      iconSet == "ios" || (oneui && special) -> classic(c)
+                      else -> themed(c)
                   }
                   val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
                   val oc = Canvas(out)
@@ -906,7 +923,7 @@ jobs:
               }
 
               // Mede o desenho e o amplia para preencher o ícone (evita ícones pequenos)
-              private fun drawFitted(c: Canvas, d: Drawable, adaptive: Boolean) {
+              private fun drawFitted(c: Canvas, d: Drawable, adaptive: Boolean, silhouette: Boolean = false) {
                   val m = 200
                   val extra = (m * 0.25f).toInt()
                   val lo = if (adaptive) -extra else 0
@@ -917,15 +934,16 @@ jobs:
                   d.draw(tc)
                   val px = IntArray(m * m)
                   tmp.getPixels(px, 0, m, 0, 0, m, m)
-                  tmp.recycle()
                   var minX = m
                   var minY = m
                   var maxX = -1
                   var maxY = -1
+                  var solid = 0
                   for (y in 0 until m) {
                       val row = y * m
                       for (x in 0 until m) {
                           if ((px[row + x] ushr 24) > 40) {
+                              solid++
                               if (x < minX) minX = x
                               if (x > maxX) maxX = x
                               if (y < minY) minY = y
@@ -937,22 +955,290 @@ jobs:
                   val hi256 = if (adaptive) 320 else 256
                   val w = maxX - minX + 1
                   val h = maxY - minY + 1
-                  if (maxX < 0 || (w >= m * 0.94f && h >= m * 0.94f)) {
+                  val full = maxX < 0 || (w >= m * 0.94f && h >= m * 0.94f)
+                  if (full || (silhouette && solid > m * m * 0.85f)) {
+                      tmp.recycle()
                       d.setBounds(lo256, lo256, hi256, hi256)
                       d.draw(c)
                       return
                   }
                   val k = 256f / m
-                  val cx = (minX + maxX + 1) / 2f * k
-                  val cy = (minY + maxY + 1) / 2f * k
+                  val cxPx = (minX + maxX + 1) / 2f
+                  val cyPx = (minY + maxY + 1) / 2f
                   val s = (0.84f * 256f / (Math.max(w, h) * k)).coerceIn(0.5f, 2.6f)
+                  if (silhouette) {
+                      val f = s * k
+                      val left = 128f - cxPx * f
+                      val top = 128f - cyPx * f
+                      val sp = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+                      sp.colorFilter = ColorMatrixColorFilter(
+                          ColorMatrix(
+                              floatArrayOf(
+                                  0f, 0f, 0f, 0f, 255f,
+                                  0f, 0f, 0f, 0f, 255f,
+                                  0f, 0f, 0f, 0f, 255f,
+                                  0f, 0f, 0f, 1f, 0f
+                              )
+                          )
+                      )
+                      c.drawBitmap(tmp, null, RectF(left, top, left + m * f, top + m * f), sp)
+                      tmp.recycle()
+                      return
+                  }
+                  tmp.recycle()
                   c.save()
                   c.translate(128f, 128f)
                   c.scale(s, s)
-                  c.translate(-cx, -cy)
+                  c.translate(-cxPx * k, -cyPx * k)
                   d.setBounds(lo256, lo256, hi256, hi256)
                   d.draw(c)
                   c.restore()
+              }
+
+              // Minimalista: apps viram silhuetas brancas sobre vidro
+              private fun monoWrap(c: Canvas) {
+                  c.drawColor(Color.argb(70, 255, 255, 255))
+                  val b = base
+                  if (b is AdaptiveIconDrawable) {
+                      var layer: Drawable? = null
+                      if (Build.VERSION.SDK_INT >= 33) layer = b.monochrome
+                      if (layer == null) layer = b.foreground
+                      if (layer != null) {
+                          drawFitted(c, layer, true, true)
+                          return
+                      }
+                  }
+                  drawFitted(c, b, false, true)
+              }
+
+              // ---------- conjuntos de ícones próprios (One UI, Xiaomi, POCO, Minimalista) ----------
+
+              private fun accentOf(): Int = when (kind) {
+                  "phone" -> k(0xFF22C55E)
+                  "messages" -> if (oneui) k(0xFF3B82F6) else k(0xFFF97316)
+                  "camera" -> k(0xFF64748B)
+                  "settings" -> k(0xFF3B82F6)
+                  "clock" -> k(0xFF14B8A6)
+                  "calculator" -> k(0xFFF97316)
+                  "browser" -> k(0xFF3B82F6)
+                  "photos" -> k(0xFFF59E0B)
+                  "calendar" -> k(0xFFEF4444)
+                  "notes" -> k(0xFFEAB308)
+                  "maps" -> k(0xFF22C55E)
+                  "mail" -> k(0xFF3B82F6)
+                  "music" -> k(0xFFEF4444)
+                  "contacts" -> k(0xFF6366F1)
+                  "skins" -> k(0xFF8B5CF6)
+                  else -> k(0xFF64748B)
+              }
+
+              private fun mix(a: Int, b: Int, t: Float): Int {
+                  val r = (Color.red(a) * (1f - t) + Color.red(b) * t).toInt()
+                  val g = (Color.green(a) * (1f - t) + Color.green(b) * t).toInt()
+                  val bl = (Color.blue(a) * (1f - t) + Color.blue(b) * t).toInt()
+                  return Color.rgb(r, g, bl)
+              }
+
+              private fun themed(c: Canvas) {
+                  val accent = accentOf()
+                  val glyphColor: Int
+                  val punchColor: Int
+                  when {
+                      miui -> {
+                          gradient(c, mix(accent, Color.WHITE, 0.10f), mix(accent, Color.BLACK, 0.12f))
+                          glyphColor = Color.WHITE
+                          punchColor = accent
+                      }
+                      poco -> {
+                          gradient(c, k(0xFF2C2C35), k(0xFF17171C))
+                          glyphColor = mix(accent, Color.WHITE, 0.25f)
+                          punchColor = k(0xFF1F1F26)
+                      }
+                      mono -> {
+                          c.drawColor(Color.argb(70, 255, 255, 255))
+                          glyphColor = Color.WHITE
+                          punchColor = Color.TRANSPARENT
+                      }
+                      else -> {
+                          val pastel = mix(accent, Color.WHITE, 0.82f)
+                          gradient(c, Color.WHITE, pastel)
+                          glyphColor = accent
+                          punchColor = mix(Color.WHITE, pastel, 0.5f)
+                      }
+                  }
+                  val g = Paint(Paint.ANTI_ALIAS_FLAG)
+                  g.color = glyphColor
+                  val p = Paint(Paint.ANTI_ALIAS_FLAG)
+                  if (mono) p.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) else p.color = punchColor
+                  drawGlyph(c, g, p, miui)
+              }
+
+              // g = cor do desenho, p = cor do "furo", o = desenho só com contorno (Xiaomi)
+              private fun drawGlyph(c: Canvas, g: Paint, p: Paint, o: Boolean) {
+                  val fill = Paint(g)
+                  fill.style = Paint.Style.FILL
+                  val line = Paint(g)
+                  line.style = Paint.Style.STROKE
+                  line.strokeWidth = 14f
+                  line.strokeCap = Paint.Cap.ROUND
+                  line.strokeJoin = Paint.Join.ROUND
+                  val body = if (o) line else fill
+                  val cut = if (o) fill else p
+                  val cutLine = Paint(if (o) line else p)
+                  cutLine.style = Paint.Style.STROKE
+                  cutLine.strokeWidth = 10f
+                  cutLine.strokeCap = Paint.Cap.ROUND
+                  cutLine.strokeJoin = Paint.Join.ROUND
+                  when (kind) {
+                      "phone" -> {
+                          val arc = Paint(line)
+                          arc.strokeWidth = if (o) 16f else 36f
+                          c.drawArc(RectF(70f, 26f, 230f, 186f), 85f, 100f, false, arc)
+                          val r = if (o) 12f else 26f
+                          c.drawCircle(157f, 186f, r, fill)
+                          c.drawCircle(70f, 99f, r, fill)
+                      }
+                      "messages" -> {
+                          val b = Path()
+                          b.addRoundRect(RectF(44f, 52f, 212f, 172f), 44f, 44f, Path.Direction.CW)
+                          val t = Path()
+                          t.moveTo(84f, 160f)
+                          t.lineTo(60f, 212f)
+                          t.lineTo(128f, 170f)
+                          t.close()
+                          b.op(t, Path.Op.UNION)
+                          c.drawPath(b, body)
+                          for (i in -1..1) c.drawCircle(128f + i * 34f, 112f, 9f, cut)
+                      }
+                      "camera" -> {
+                          c.drawRoundRect(RectF(40f, 82f, 216f, 196f), 28f, 28f, body)
+                          c.drawRoundRect(RectF(92f, 62f, 148f, 90f), 10f, 10f, body)
+                          if (o) {
+                              c.drawCircle(128f, 140f, 34f, line)
+                          } else {
+                              c.drawCircle(128f, 140f, 40f, p)
+                              c.drawCircle(128f, 140f, 24f, fill)
+                          }
+                      }
+                      "settings" -> {
+                          val gear = Path()
+                          for (i in 0 until 8) {
+                              val a = i * 45.0 - 90.0
+                              val pts = listOf(a - 14.0 to 72.0, a - 8.0 to 94.0, a + 8.0 to 94.0, a + 14.0 to 72.0)
+                              for ((j, pr) in pts.withIndex()) {
+                                  val ang = Math.toRadians(pr.first)
+                                  val x = 128f + (Math.cos(ang) * pr.second).toFloat()
+                                  val y = 128f + (Math.sin(ang) * pr.second).toFloat()
+                                  if (i == 0 && j == 0) gear.moveTo(x, y) else gear.lineTo(x, y)
+                              }
+                          }
+                          gear.close()
+                          c.drawPath(gear, body)
+                          c.drawCircle(128f, 128f, 30f, if (o) line else p)
+                      }
+                      "browser" -> {
+                          c.drawCircle(128f, 128f, 84f, line)
+                          c.save()
+                          c.rotate(45f, 128f, 128f)
+                          val d = Path()
+                          d.moveTo(128f, 62f)
+                          d.lineTo(146f, 128f)
+                          d.lineTo(128f, 194f)
+                          d.lineTo(110f, 128f)
+                          d.close()
+                          c.drawPath(d, body)
+                          c.restore()
+                      }
+                      "photos" -> {
+                          for (i in 0 until 6) {
+                              val rad = Math.toRadians(i * 60.0)
+                              c.drawCircle(
+                                  128f + (Math.sin(rad) * 44).toFloat(),
+                                  128f - (Math.cos(rad) * 44).toFloat(),
+                                  32f, body
+                              )
+                          }
+                          if (!o) c.drawCircle(128f, 128f, 16f, p)
+                      }
+                      "calendar" -> {
+                          c.drawRoundRect(RectF(44f, 52f, 212f, 208f), 32f, 32f, body)
+                          val hl = Paint(cutLine)
+                          hl.strokeWidth = 8f
+                          c.drawLine(44f, 98f, 212f, 98f, hl)
+                          val t = Paint(if (o) fill else p)
+                          t.style = Paint.Style.FILL
+                          t.textAlign = Paint.Align.CENTER
+                          t.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                          t.textSize = 84f
+                          c.drawText(SimpleDateFormat("d", Locale.getDefault()).format(Date()), 128f, 178f, t)
+                      }
+                      "notes" -> {
+                          c.drawRoundRect(RectF(60f, 44f, 196f, 212f), 24f, 24f, body)
+                          for (y in listOf(98f, 132f, 166f)) c.drawLine(88f, y, 168f, y, cutLine)
+                      }
+                      "maps" -> {
+                          val pin = Path()
+                          pin.addCircle(128f, 102f, 50f, Path.Direction.CW)
+                          val tip = Path()
+                          tip.moveTo(86f, 132f)
+                          tip.lineTo(170f, 132f)
+                          tip.lineTo(128f, 214f)
+                          tip.close()
+                          pin.op(tip, Path.Op.UNION)
+                          c.drawPath(pin, body)
+                          c.drawCircle(128f, 102f, 18f, cut)
+                      }
+                      "mail" -> {
+                          c.drawRoundRect(RectF(40f, 68f, 216f, 188f), 24f, 24f, body)
+                          val f = Path()
+                          f.moveTo(52f, 84f)
+                          f.lineTo(128f, 142f)
+                          f.lineTo(204f, 84f)
+                          c.drawPath(f, cutLine)
+                      }
+                      "music" -> {
+                          val n = Path()
+                          n.addOval(RectF(64f, 150f, 116f, 196f), Path.Direction.CW)
+                          val st = Path()
+                          st.addRect(106f, 66f, 120f, 172f, Path.Direction.CW)
+                          n.op(st, Path.Op.UNION)
+                          val fl = Path()
+                          fl.moveTo(120f, 66f)
+                          fl.lineTo(188f, 88f)
+                          fl.lineTo(188f, 130f)
+                          fl.lineTo(120f, 108f)
+                          fl.close()
+                          n.op(fl, Path.Op.UNION)
+                          c.drawPath(n, body)
+                      }
+                      "contacts" -> {
+                          c.drawCircle(128f, 92f, 36f, body)
+                          c.drawOval(RectF(62f, 142f, 194f, 238f), body)
+                      }
+                      "clock" -> {
+                          c.drawCircle(128f, 128f, 84f, line)
+                          val cal = Calendar.getInstance()
+                          val h = cal.get(Calendar.HOUR) % 12
+                          val mi = cal.get(Calendar.MINUTE)
+                          val ha = Math.toRadians((h + mi / 60.0) * 30.0)
+                          val ma = Math.toRadians(mi * 6.0)
+                          c.drawLine(128f, 128f, 128f + (Math.sin(ha) * 40).toFloat(), 128f - (Math.cos(ha) * 40).toFloat(), line)
+                          c.drawLine(128f, 128f, 128f + (Math.sin(ma) * 58).toFloat(), 128f - (Math.cos(ma) * 58).toFloat(), line)
+                      }
+                      "calculator" -> {
+                          c.drawRoundRect(RectF(60f, 40f, 196f, 216f), 26f, 26f, body)
+                          c.drawRoundRect(RectF(80f, 60f, 176f, 96f), 8f, 8f, cut)
+                          for (r in 0..2) {
+                              for (cc in 0..2) c.drawCircle(96f + cc * 32f, 130f + r * 30f, 9f, cut)
+                          }
+                      }
+                      "skins" -> {
+                          c.drawRoundRect(RectF(52f, 52f, 204f, 204f), 40f, 40f, body)
+                          for (i in 0 until 4) {
+                              c.drawCircle(96f + (i % 2) * 64f, 96f + (i / 2) * 64f, 20f, cut)
+                          }
+                      }
+                  }
               }
 
               // ---------- ícones estilo iOS ----------
@@ -3587,8 +3873,12 @@ jobs:
                   rowChoice(
                       c, "Estilo dos ícones", "iconSet",
                       listOf(
-                          "ios" to "Estilo iOS", "oneui" to "Estilo One UI",
-                          "miui" to "Estilo Xiaomi", "original" to "Ícones originais"
+                          "ios" to "Estilo iPhone (cores com gradiente)",
+                          "oneui" to "Estilo One UI (fundo claro, símbolo colorido)",
+                          "miui" to "Estilo Xiaomi (cor chapada, só contorno)",
+                          "poco" to "Estilo POCO (fundo escuro, símbolo brilhante)",
+                          "mono" to "Monocromático (silhuetas brancas)",
+                          "original" to "Ícones originais dos apps"
                       )
                   )
                   rowChoice(
