@@ -164,6 +164,7 @@ jobs:
           sealed class Entry {
               data class App(val pkg: String) : Entry()
               class Folder(var name: String, val pkgs: MutableList<String>) : Entry()
+              object Gap : Entry()
           }
 
           class Store(ctx: Context) {
@@ -176,8 +177,11 @@ jobs:
                       val arr = JSONArray(s)
                       for (i in 0 until arr.length()) {
                           val o = arr.getJSONObject(i)
-                          if (o.getString("t") == "a") {
+                          val kind = o.getString("t")
+                          if (kind == "a") {
                               out.add(Entry.App(o.getString("p")))
+                          } else if (kind == "g") {
+                              out.add(Entry.Gap)
                           } else {
                               val l = mutableListOf<String>()
                               val a = o.getJSONArray("a")
@@ -198,6 +202,9 @@ jobs:
                           is Entry.App -> {
                               o.put("t", "a")
                               o.put("p", e.pkg)
+                          }
+                          is Entry.Gap -> {
+                              o.put("t", "g")
                           }
                           is Entry.Folder -> {
                               o.put("t", "f")
@@ -291,6 +298,7 @@ jobs:
                   "weather" to true,
                   "drawerTabs" to false,
                   "dockStyle" to "glass",
+                  "gridMode" to "compact",
                   "gearStyle" to "icon",
                   "homeHeader" to "none",
                   "folderAlpha" to 40,
@@ -325,7 +333,7 @@ jobs:
                   val over: Map<String, Any> = when (name) {
                       "ios_dark" -> mapOf("tint" to "dark", "dockAlpha" to 45, "dim" to 15)
                       "oneui" -> mapOf(
-                          "iconSet" to "oneui", "dockStyle" to "none", "shape" to "squircle", "iconSize" to 68,
+                          "iconSet" to "oneui", "gridMode" to "free", "dockStyle" to "none", "shape" to "squircle", "iconSize" to 68,
                           "cols" to 4, "rows" to 5, "labelSize" to 11,
                           "dockMax" to 4, "dockAlpha" to 0, "dockRadius" to 28,
                           "pillStyle" to "bar", "panelStyle" to "oneui", "homeHeader" to "oneui",
@@ -335,7 +343,7 @@ jobs:
                           "animPress" to true, "gear" to false, "tempHome" to false
                       )
                       "hyperos" -> mapOf(
-                          "iconSet" to "miui", "dockStyle" to "capsule", "shape" to "squircle", "iconSize" to 70,
+                          "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "capsule", "shape" to "squircle", "iconSize" to 70,
                           "cols" to 4, "rows" to 6, "labelSize" to 12,
                           "dockMax" to 4, "dockAlpha" to 28, "dockRadius" to 30, "pill" to false,
                           "homeHeader" to "xiaomi", "panelStyle" to "oneui", "folderStyle" to "grid3",
@@ -344,14 +352,14 @@ jobs:
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "miui" -> mapOf(
-                          "iconSet" to "miui", "dockStyle" to "flush", "iconSize" to 68, "cols" to 4, "rows" to 6,
+                          "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "flush", "iconSize" to 68, "cols" to 4, "rows" to 6,
                           "labelSize" to 12, "dockAlpha" to 30, "dockRadius" to 22, "pill" to false,
                           "panelStyle" to "oneui", "folderStyle" to "grid3", "folderAlpha" to 50,
                           "library" to false, "animStyle" to "miui", "wiggle" to false,
                           "swipeSearch" to true, "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "poco" -> mapOf(
-                          "iconSet" to "poco", "dockStyle" to "dark", "iconSize" to 66, "cols" to 4, "rows" to 6,
+                          "iconSet" to "poco", "gridMode" to "free", "dockStyle" to "dark", "iconSize" to 66, "cols" to 4, "rows" to 6,
                           "labelSize" to 11, "tint" to "dark", "dockMax" to 5, "dockAlpha" to 40,
                           "dockRadius" to 26, "pill" to false, "library" to false, "today" to false,
                           "drawerGesture" to true, "drawerTabs" to true, "folderAlpha" to 45,
@@ -359,7 +367,7 @@ jobs:
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "classic" -> mapOf(
-                          "iconSet" to "original", "dockStyle" to "flush", "dockRadius" to 0, "shape" to "circle", "iconSize" to 64, "cols" to 5,
+                          "iconSet" to "original", "gridMode" to "free", "dockStyle" to "flush", "dockRadius" to 0, "shape" to "circle", "iconSize" to 64, "cols" to 5,
                           "labelSize" to 12, "tint" to "dark", "dockAlpha" to 55, "today" to false,
                           "pill" to false, "wiggle" to false, "animLaunch" to false, "animPage" to false,
                           "animPress" to false, "drawerGesture" to true
@@ -1656,6 +1664,8 @@ jobs:
               private var chromeBar: Boolean? = null
               private var gearStyleApplied = ""
               private var dockStyleApplied = ""
+              private var dragDockPkg: String? = null
+              private var dockMarginPx = 0
               private var cfgStamp = 0L
               private var dragEntry: Entry? = null
               private var dragSource: View? = null
@@ -2002,14 +2012,18 @@ jobs:
                           is Entry.App -> {
                               if (apps.containsKey(e.pkg) && e.pkg !in dockPkgs && e.pkg !in hidden && seen.add(e.pkg)) {
                                   cleaned.add(e)
+                              } else {
+                                  cleaned.add(Entry.Gap)
                               }
                           }
                           is Entry.Folder -> {
                               e.pkgs.retainAll { apps.containsKey(it) && it !in dockPkgs && it !in hidden && seen.add(it) }
-                              if (e.pkgs.isNotEmpty()) cleaned.add(e)
+                              cleaned.add(if (e.pkgs.isNotEmpty()) e else Entry.Gap)
                           }
+                          is Entry.Gap -> cleaned.add(e)
                       }
                   }
+                  while (cleaned.isNotEmpty() && cleaned.last() === Entry.Gap) cleaned.removeAt(cleaned.size - 1)
                   for (a in sorted) {
                       if (a.pkg !in seen && a.pkg !in dockPkgs && a.pkg !in hidden) {
                           cleaned.add(if (a.pkg == SKINS_PKG) 0 else cleaned.size, Entry.App(a.pkg))
@@ -2026,13 +2040,61 @@ jobs:
                   for (e in home) {
                       when (e) {
                           is Entry.App -> out.add(e)
+                          is Entry.Gap -> out.add(e)
                           is Entry.Folder -> {
                               if (e.pkgs.size == 1) out.add(Entry.App(e.pkgs[0]))
                               else if (e.pkgs.size > 1) out.add(e)
+                              else out.add(Entry.Gap)
                           }
                       }
                   }
                   home = out
+                  trimGaps()
+              }
+
+              private fun pageStart(hp: Int) = if (hp == 0) 0 else firstPageSize() + (hp - 1) * (COLS * rows)
+
+              // Tira espaços vazios do fim e páginas do meio que ficaram totalmente vazias
+              private fun trimGaps() {
+                  while (home.isNotEmpty() && home.last() === Entry.Gap) home.removeAt(home.size - 1)
+                  val per = COLS * rows
+                  var hp = 1
+                  while (true) {
+                      val start = firstPageSize() + (hp - 1) * per
+                      if (start >= home.size) break
+                      val end = Math.min(start + per, home.size)
+                      var allGap = true
+                      for (i in start until end) {
+                          if (home[i] !== Entry.Gap) {
+                              allGap = false
+                              break
+                          }
+                      }
+                      if (allGap && end - start == per) {
+                          for (i in end - 1 downTo start) home.removeAt(i)
+                      } else {
+                          hp++
+                      }
+                  }
+              }
+
+              // Modo automático: os ícones de cada página sobem para preencher os espaços vagos
+              private fun compactPages() {
+                  val per = COLS * rows
+                  var start = 0
+                  var size = firstPageSize()
+                  while (start < home.size) {
+                      val end = Math.min(start + size, home.size)
+                      val items = ArrayList<Entry>()
+                      for (i in start until end) {
+                          if (home[i] !== Entry.Gap) items.add(home[i])
+                      }
+                      for (i in start until end) {
+                          home[i] = if (i - start < items.size) items[i - start] else Entry.Gap
+                      }
+                      start += size
+                      size = per
+                  }
               }
 
               private fun saveAll() {
@@ -2043,6 +2105,10 @@ jobs:
 
               private fun commit() {
                   normalize()
+                  if (Cfg.s("gridMode") == "compact") {
+                      compactPages()
+                      trimGaps()
+                  }
                   saveAll()
                   rebuild()
               }
@@ -2064,6 +2130,7 @@ jobs:
                   val pages = mutableListOf<List<Entry>>()
                   pages.add(home.take(first))
                   pages.addAll(home.drop(first).chunked(per))
+                  if (editing && pages.last().any { it !== Entry.Gap }) pages.add(emptyList())
                   homePages = pages
                   pager.adapter?.notifyDataSetChanged()
                   pager.offscreenPageLimit = Math.max(1, Math.min(homePages.size + 1, 5))
@@ -2080,8 +2147,14 @@ jobs:
               // ================= Operações =================
 
               private fun removeFromHome(pkg: String) {
-                  home = home.filterNot { it is Entry.App && it.pkg == pkg }.toMutableList()
-                  for (e in home) if (e is Entry.Folder) e.pkgs.remove(pkg)
+                  for (i in home.indices) {
+                      val e = home[i]
+                      if (e is Entry.App && e.pkg == pkg) {
+                          home[i] = Entry.Gap
+                      } else if (e is Entry.Folder) {
+                          e.pkgs.remove(pkg)
+                      }
+                  }
                   normalize()
               }
 
@@ -2391,6 +2464,7 @@ jobs:
                           holder.addView(folderIconView(e), FrameLayout.LayoutParams(iconPx, iconPx))
                           name = e.name
                       }
+                      is Entry.Gap -> return View(this)
                   }
                   col.addView(holder, LinearLayout.LayoutParams(iconPx, iconPx))
                   if (Cfg.b("labels")) col.addView(labelView(name), LinearLayout.LayoutParams(MATCH, WRAP))
@@ -2400,6 +2474,7 @@ jobs:
                           when (e) {
                               is Entry.App -> apps[e.pkg]?.let { launch(it, holder) }
                               is Entry.Folder -> openGroup(e.name, e.pkgs.toList(), e, holder)
+                              is Entry.Gap -> {}
                           }
                       }
                   }
@@ -2411,6 +2486,7 @@ jobs:
                           when (e) {
                               is Entry.App -> appMenu(e.pkg, Where.HOME)
                               is Entry.Folder -> folderMenu(e)
+                              is Entry.Gap -> {}
                           }
                       }
                       true
@@ -2424,9 +2500,25 @@ jobs:
 
               private fun startDrag(v: View, e: Entry) {
                   dragEntry = e
+                  dragDockPkg = null
                   dragSource = v
                   v.alpha = 0.3f
                   v.startDragAndDrop(ClipData.newPlainText("e", "e"), View.DragShadowBuilder(v), null, 0)
+              }
+
+              private fun startDockDrag(v: View, pkg: String) {
+                  dragEntry = null
+                  dragDockPkg = pkg
+                  dragSource = v
+                  v.alpha = 0.3f
+                  v.startDragAndDrop(ClipData.newPlainText("e", "e"), View.DragShadowBuilder(v), null, 0)
+              }
+
+              private fun endDrag() {
+                  dragSource?.alpha = 1f
+                  dragSource = null
+                  dragEntry = null
+                  dragDockPkg = null
               }
 
               private fun maybeFlip(v: View, ev: DragEvent) {
@@ -2446,10 +2538,10 @@ jobs:
                   }
               }
 
-              private fun slotListener(target: Entry?, hp: Int): View.OnDragListener {
+              private fun slotListener(target: Entry?, gIdx: Int): View.OnDragListener {
                   return View.OnDragListener { v, ev ->
                       when (ev.action) {
-                          DragEvent.ACTION_DRAG_STARTED -> dragEntry != null
+                          DragEvent.ACTION_DRAG_STARTED -> dragEntry != null || dragDockPkg != null
                           DragEvent.ACTION_DRAG_LOCATION -> {
                               maybeFlip(v, ev)
                               true
@@ -2464,13 +2556,12 @@ jobs:
                                   else -> 0
                               }
                               val d = dragEntry
-                              v.post { handleDrop(d, target, zone, hp) }
+                              val dk = dragDockPkg
+                              v.post { handleDrop(d, dk, target, zone, gIdx) }
                               true
                           }
                           DragEvent.ACTION_DRAG_ENDED -> {
-                              dragSource?.alpha = 1f
-                              dragSource = null
-                              dragEntry = null
+                              endDrag()
                               true
                           }
                           else -> true
@@ -2478,41 +2569,121 @@ jobs:
                   }
               }
 
-              private fun handleDrop(d: Entry?, target: Entry?, zone: Int, hp: Int) {
+              // Solta um ícone numa casa da grade. gIdx = posição da casa na lista da tela inicial.
+              private fun handleDrop(d: Entry?, dockPkg: String?, target: Entry?, zone: Int, gIdx: Int) {
+                  if (dockPkg != null) {
+                      dropFromDock(dockPkg, target, zone, gIdx)
+                      return
+                  }
                   if (d == null || d === target) {
                       rebuild()
                       return
                   }
-                  val per = COLS * rows
                   val dIdx = home.indexOfFirst { it === d }
                   if (dIdx < 0) {
                       rebuild()
                       return
                   }
-                  if (target == null) {
-                      var tIdx = Math.min(home.size, pageEnd(hp))
-                      home.removeAt(dIdx)
-                      if (dIdx < tIdx) tIdx--
-                      home.add(tIdx.coerceIn(0, home.size), d)
-                  } else {
-                      val tIdx = home.indexOfFirst { it === target }
-                      if (tIdx < 0) {
+                  val free = Cfg.s("gridMode") == "free"
+                  if (target == null || target === Entry.Gap) {
+                      if (gIdx == dIdx) {
                           rebuild()
                           return
                       }
-                      if (zone == 0 && d is Entry.App && target is Entry.App) {
-                          home[tIdx] = Entry.Folder("Pasta", mutableListOf(target.pkg, d.pkg))
-                          home.removeAt(dIdx)
-                      } else if (zone == 0 && d is Entry.App && target is Entry.Folder) {
-                          target.pkgs.add(d.pkg)
-                          home.removeAt(dIdx)
+                      while (home.size <= gIdx) home.add(Entry.Gap)
+                      home[gIdx] = d
+                      home[dIdx] = Entry.Gap
+                      commit()
+                      return
+                  }
+                  val tIdx = home.indexOfFirst { it === target }
+                  if (tIdx < 0) {
+                      rebuild()
+                      return
+                  }
+                  if (zone == 0 && d is Entry.App && target is Entry.App) {
+                      home[tIdx] = Entry.Folder("Pasta", mutableListOf(target.pkg, d.pkg))
+                      home[dIdx] = Entry.Gap
+                  } else if (zone == 0 && d is Entry.App && target is Entry.Folder) {
+                      target.pkgs.add(d.pkg)
+                      home[dIdx] = Entry.Gap
+                  } else if (free) {
+                      home[tIdx] = d
+                      home[dIdx] = target
+                  } else {
+                      home.removeAt(dIdx)
+                      val n = home.indexOfFirst { it === target }
+                      home.add(if (zone < 0) n else n + 1, d)
+                  }
+                  commit()
+              }
+
+              private fun dropFromDock(pkg: String, target: Entry?, zone: Int, gIdx: Int) {
+                  dockPkgs.remove(pkg)
+                  hidden.remove(pkg)
+                  val newE = Entry.App(pkg)
+                  if (target == null || target === Entry.Gap) {
+                      while (home.size <= gIdx) home.add(Entry.Gap)
+                      home[gIdx] = newE
+                  } else {
+                      val tIdx = home.indexOfFirst { it === target }
+                      if (tIdx < 0) {
+                          home.add(newE)
+                      } else if (target is Entry.Folder && zone == 0) {
+                          target.pkgs.add(pkg)
+                      } else if (target is Entry.App && zone == 0) {
+                          home[tIdx] = Entry.Folder("Pasta", mutableListOf(target.pkg, pkg))
                       } else {
-                          home.removeAt(dIdx)
-                          val n = home.indexOfFirst { it === target }
-                          home.add(if (zone < 0) n else n + 1, d)
+                          home.add(if (zone < 0) tIdx else tIdx + 1, newE)
                       }
                   }
                   commit()
+              }
+
+              private fun dockSlotW(): Int =
+                  (resources.displayMetrics.widthPixels - dockMarginPx - dp(16)) / Math.max(1, Cfg.i("dockMax"))
+
+              // Solta um ícone no dock (da tela inicial ou reorganizando o próprio dock)
+              private fun dropOnDock(d: Entry?, dockPkg: String?, x: Float) {
+                  val max = Cfg.i("dockMax")
+                  val n = dockPkgs.size
+                  val slotW = dockSlotW()
+                  val start = (dock.width - n * slotW) / 2f
+                  var idx = ((x - start) / slotW).toInt()
+                  if (dockPkg != null) {
+                      val from = dockPkgs.indexOf(dockPkg)
+                      if (from < 0 || n == 0) {
+                          rebuild()
+                          return
+                      }
+                      idx = idx.coerceIn(0, n - 1)
+                      dockPkgs.removeAt(from)
+                      dockPkgs.add(idx, dockPkg)
+                      commit()
+                      return
+                  }
+                  if (d is Entry.App) {
+                      val dIdx = home.indexOfFirst { it === d }
+                      if (dIdx < 0) {
+                          rebuild()
+                          return
+                      }
+                      hidden.remove(d.pkg)
+                      if (n < max) {
+                          idx = idx.coerceIn(0, n)
+                          dockPkgs.add(idx, d.pkg)
+                          home[dIdx] = Entry.Gap
+                      } else {
+                          idx = idx.coerceIn(0, n - 1)
+                          val out = dockPkgs[idx]
+                          dockPkgs[idx] = d.pkg
+                          home[dIdx] = Entry.App(out)
+                      }
+                      commit()
+                  } else {
+                      Toast.makeText(this, "Pastas não cabem no dock", Toast.LENGTH_SHORT).show()
+                      rebuild()
+                  }
               }
 
               // ================= Páginas =================
@@ -2530,6 +2701,7 @@ jobs:
                           true
                       }
                   }
+                  val base = pageStart(hp)
                   val withHeader = hp == 0 && headerActive()
                   if (withHeader) root.addView(buildHomeHeader(), LinearLayout.LayoutParams(MATCH, 0, HDR_ROWS.toFloat()))
                   for (r in 0 until (if (withHeader) rows - HDR_ROWS else rows)) {
@@ -2537,8 +2709,9 @@ jobs:
                       root.addView(row, LinearLayout.LayoutParams(MATCH, 0, 1f))
                       for (c in 0 until COLS) {
                           val slot = FrameLayout(this)
-                          val e = items.getOrNull(r * COLS + c)
-                          if (e != null) {
+                          val local = r * COLS + c
+                          val e = items.getOrNull(local)
+                          if (e != null && e !== Entry.Gap) {
                               slot.addView(
                                   entryCell(e),
                                   FrameLayout.LayoutParams(
@@ -2547,9 +2720,18 @@ jobs:
                                       Gravity.TOP or Gravity.CENTER_HORIZONTAL
                                   )
                               )
+                          } else if (editing) {
+                              val ph = View(this)
+                              ph.background = rounded(Color.argb(38, 255, 255, 255), (iconPx * 0.225f).toInt())
+                              slot.addView(
+                                  ph,
+                                  FrameLayout.LayoutParams(iconPx, iconPx, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                                      topMargin = dp(8)
+                                  }
+                              )
                           }
-                          if (editing) slot.setOnDragListener(slotListener(e, hp))
-                          if (e == null && !editing) {
+                          if (editing) slot.setOnDragListener(slotListener(e, base + local))
+                          if ((e == null || e === Entry.Gap) && !editing) {
                               slot.setOnLongClickListener {
                                   haptic(it)
                                   openHomeMenu()
@@ -2564,21 +2746,24 @@ jobs:
 
               private fun buildDock() {
                   dock.removeAllViews()
+                  val slotW = dockSlotW()
+                  val size = Math.max(dp(30), Math.min(iconPx, slotW - dp(6)))
                   for (pk in dockPkgs) {
                       val a = apps[pk] ?: continue
                       val frame = FrameLayout(this)
-                      val iv = roundIcon(a.icon, iconPx)
+                      val iv = roundIcon(a.icon, size)
                       pressable(iv)
-                      iv.setOnClickListener { launch(a, iv) }
+                      iv.setOnClickListener { if (!editing) launch(a, iv) }
                       iv.setOnLongClickListener {
                           haptic(it)
-                          appMenu(a.pkg, Where.DOCK)
+                          if (editing) startDockDrag(frame, a.pkg) else appMenu(a.pkg, Where.DOCK)
                           true
                       }
-                      frame.addView(iv, FrameLayout.LayoutParams(iconPx, iconPx, Gravity.CENTER))
-                      dock.addView(frame, LinearLayout.LayoutParams(0, WRAP, 1f))
+                      frame.addView(iv, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
+                      if (editing && Cfg.b("wiggle")) wiggle(frame)
+                      dock.addView(frame, LinearLayout.LayoutParams(slotW, WRAP))
                   }
-                  dock.visibility = if (dockPkgs.isEmpty() || !Cfg.b("dock")) View.GONE else View.VISIBLE
+                  dock.visibility = if (!Cfg.b("dock") || (dockPkgs.isEmpty() && !editing)) View.GONE else View.VISIBLE
               }
 
               private fun updateDots(selected: Int) {
@@ -3382,7 +3567,7 @@ jobs:
                   sp.edit().putBoolean("tip", true).apply()
                   Toast.makeText(
                       this,
-                      "Dica: segure o dedo num espaço vazio da tela para abrir os ajustes.",
+                      "Dica: segure um ícone para mover. Segure um espaço vazio para abrir os ajustes.",
                       Toast.LENGTH_LONG
                   ).show()
               }
@@ -3547,6 +3732,7 @@ jobs:
                       }
                   }
                   dock.background = d
+                  dockMarginPx = dp(ml) + dp(mr)
                   dock.setPadding(dp(8), dp(padTop), dp(8), dp(padBottom))
                   if (style != dockStyleApplied) {
                       dockStyleApplied = style
@@ -3612,6 +3798,23 @@ jobs:
                       openHomeMenu()
                       true
                   }
+                  dock.setOnDragListener { v, ev ->
+                      when (ev.action) {
+                          DragEvent.ACTION_DRAG_STARTED -> dragEntry != null || dragDockPkg != null
+                          DragEvent.ACTION_DROP -> {
+                              val d = dragEntry
+                              val dk = dragDockPkg
+                              val x = ev.x
+                              v.post { dropOnDock(d, dk, x) }
+                              true
+                          }
+                          DragEvent.ACTION_DRAG_ENDED -> {
+                              endDrag()
+                              true
+                          }
+                          else -> true
+                      }
+                  }
                   barRow.setOnLongClickListener(menu)
                   dots.setOnLongClickListener(menu)
                   dock.setOnLongClickListener(menu)
@@ -3647,6 +3850,31 @@ jobs:
                       pager.setCurrentItem(firstHome(), false)
                   }
                   if (key == "skin") settingsList?.let { buildSettings(it) }
+              }
+
+              private fun organizeByCategory() {
+                  val l = mutableListOf<Entry>()
+                  if (apps.containsKey(SKINS_PKG) && SKINS_PKG !in dockPkgs && SKINS_PKG !in hidden) {
+                      l.add(Entry.App(SKINS_PKG))
+                  }
+                  val groups = sorted
+                      .filter { it.pkg != SKINS_PKG && it.pkg !in dockPkgs && it.pkg !in hidden }
+                      .groupBy { it.category }
+                  for (cat in CATEGORIES) {
+                      val g = groups[cat] ?: continue
+                      if (g.size >= 2) {
+                          l.add(Entry.Folder(cat, g.map { it.pkg }.toMutableList()))
+                      } else {
+                          l.add(Entry.App(g[0].pkg))
+                      }
+                  }
+                  for ((cat, g) in groups) {
+                      if (cat !in CATEGORIES) {
+                          for (a in g) l.add(Entry.App(a.pkg))
+                      }
+                  }
+                  home = l
+                  commit()
               }
 
               private fun openSkinPicker() {
@@ -3888,6 +4116,13 @@ jobs:
                           "circle" to "Círculo", "square" to "Quadrado"
                       )
                   )
+                  rowChoice(
+                      c, "Organização dos ícones", "gridMode",
+                      listOf(
+                          "compact" to "Automática (preenche os espaços, como no iPhone)",
+                          "free" to "Livre (cada ícone fica onde você deixar)"
+                      )
+                  )
                   rowSeek(c, "Tamanho do ícone", "iconSize", 50, 90, "%")
                   rowSeek(c, "Colunas", "cols", 3, 6, "")
                   rowSeek(c, "Linhas", "rows", 0, 8, "", "Automático")
@@ -4005,6 +4240,16 @@ jobs:
                           showMenu("Toque para mostrar de novo") {
                               for (a in l) add(a.label) { addToHome(a.pkg) }
                           }
+                      }
+                  }
+                  rowAction(c, "Arrumar espaços vazios (juntar os ícones)") {
+                      home.removeAll { it === Entry.Gap }
+                      commit()
+                  }
+                  rowAction(c, "Organizar em pastas por categoria") {
+                      showMenu("Isso refaz a tela inicial") {
+                          add("Organizar") { organizeByCategory() }
+                          add("Cancelar") {}
                       }
                   }
                   rowAction(c, "Organizar apps em ordem alfabética") {
