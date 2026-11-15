@@ -84,6 +84,7 @@ jobs:
 
               <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
               <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.READ_CALENDAR" />
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
               <queries>
@@ -296,6 +297,7 @@ jobs:
                   "gear" to true,
                   "tempHome" to true,
                   "weather" to true,
+                  "calendarBrief" to false,
                   "drawerTabs" to false,
                   "dockStyle" to "glass",
                   "gridMode" to "compact",
@@ -1544,6 +1546,7 @@ jobs:
           import android.app.role.RoleManager
           import android.Manifest
           import android.content.ClipData
+          import android.content.ContentUris
           import android.content.Intent
           import android.content.IntentFilter
           import android.content.pm.ApplicationInfo
@@ -1565,7 +1568,9 @@ jobs:
           import android.os.Environment
           import android.os.StatFs
           import android.provider.MediaStore
+          import android.provider.CalendarContract
           import android.provider.Settings
+          import android.speech.RecognizerIntent
           import android.text.InputType
           import android.text.SpannableStringBuilder
           import android.text.Spanned
@@ -1665,6 +1670,7 @@ jobs:
               private var gearStyleApplied = ""
               private var dockStyleApplied = ""
               private var dragDockPkg: String? = null
+              private var searchField: EditText? = null
               private var dockMarginPx = 0
               private var cfgStamp = 0L
               private var dragEntry: Entry? = null
@@ -1704,6 +1710,7 @@ jobs:
                   Cfg.init(this)
                   Weather.load(this)
                   store = Store(this)
+                  rows = if (Cfg.i("rows") > 0) Cfg.i("rows") else getSharedPreferences("misc", MODE_PRIVATE).getInt("autoRows", 5)
                   WindowCompat.setDecorFitsSystemWindows(window, false)
 
                   content = FrameLayout(this)
@@ -1769,15 +1776,19 @@ jobs:
                   searchBar = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       gravity = Gravity.CENTER_VERTICAL
-                      setPadding(dp(18), 0, dp(18), 0)
+                      setPadding(dp(18), 0, dp(6), 0)
                       setOnClickListener { openSearch() }
+                  }
+                  fun glyphButton(k: String, onClick: () -> Unit): View {
+                      val box = FrameLayout(this)
+                      box.addView(GlyphView(this).apply { kind = k }, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
+                      box.setOnClickListener { onClick() }
+                      return box
                   }
                   searchBar.addView(GlyphView(this).apply { kind = "g" }, LinearLayout.LayoutParams(dp(24), dp(24)))
                   searchBar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-                  searchBar.addView(GlyphView(this).apply { kind = "mic" }, LinearLayout.LayoutParams(dp(24), dp(24)).apply {
-                      rightMargin = dp(16)
-                  })
-                  searchBar.addView(GlyphView(this).apply { kind = "lens" }, LinearLayout.LayoutParams(dp(24), dp(24)))
+                  searchBar.addView(glyphButton("mic") { startVoiceSearch() }, LinearLayout.LayoutParams(dp(46), MATCH))
+                  searchBar.addView(glyphButton("lens") { startLensSearch() }, LinearLayout.LayoutParams(dp(46), MATCH))
 
                   dock = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
@@ -2054,9 +2065,13 @@ jobs:
 
               private fun pageStart(hp: Int) = if (hp == 0) 0 else firstPageSize() + (hp - 1) * (COLS * rows)
 
-              // Tira espaços vazios do fim e páginas do meio que ficaram totalmente vazias
+              // Tira só os espaços vazios do fim da lista (seguro a qualquer momento)
               private fun trimGaps() {
                   while (home.isNotEmpty() && home.last() === Entry.Gap) home.removeAt(home.size - 1)
+              }
+
+              // Apaga páginas do meio que ficaram totalmente vazias (só depois de uma ação do usuário)
+              private fun collapseEmptyPages() {
                   val per = COLS * rows
                   var hp = 1
                   while (true) {
@@ -2076,6 +2091,12 @@ jobs:
                           hp++
                       }
                   }
+              }
+
+              // Coloca um app novo no primeiro espaço livre (ou no fim)
+              private fun placeNew(pkg: String) {
+                  val g = home.indexOfFirst { it === Entry.Gap }
+                  if (g >= 0) home[g] = Entry.App(pkg) else home.add(Entry.App(pkg))
               }
 
               // Modo automático: os ícones de cada página sobem para preencher os espaços vagos
@@ -2105,10 +2126,9 @@ jobs:
 
               private fun commit() {
                   normalize()
-                  if (Cfg.s("gridMode") == "compact") {
-                      compactPages()
-                      trimGaps()
-                  }
+                  if (Cfg.s("gridMode") == "compact") compactPages()
+                  collapseEmptyPages()
+                  trimGaps()
                   saveAll()
                   rebuild()
               }
@@ -2120,6 +2140,7 @@ jobs:
                   val newRows = if (fixed > 0) fixed else if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 6) else rows
                   if (newRows != rows || homePages.isEmpty()) {
                       rows = newRows
+                      if (Cfg.i("rows") == 0) getSharedPreferences("misc", MODE_PRIVATE).edit().putInt("autoRows", newRows).apply()
                       if (loaded) rebuild()
                   }
               }
@@ -2168,7 +2189,7 @@ jobs:
               private fun addToHome(pkg: String) {
                   hidden.remove(pkg)
                   removeFromHome(pkg)
-                  home.add(Entry.App(pkg))
+                  placeNew(pkg)
                   commit()
               }
 
@@ -2181,14 +2202,14 @@ jobs:
 
               private fun undock(pkg: String) {
                   dockPkgs.remove(pkg)
-                  home.add(Entry.App(pkg))
+                  placeNew(pkg)
                   commit()
               }
 
               private fun takeOutOfFolder(pkg: String, f: Entry.Folder) {
                   closeGroup()
                   f.pkgs.remove(pkg)
-                  home.add(Entry.App(pkg))
+                  placeNew(pkg)
                   commit()
               }
 
@@ -2834,6 +2855,11 @@ jobs:
                       setShadowLayer(4f, 0f, 1f, 0x44000000)
                       setOnClickListener { refreshWeather(true) }
                   }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(4) })
+                  box.addView(tv(tipLine(), 13f, 0xF2FFFFFF.toInt()).apply {
+                      setShadowLayer(4f, 0f, 1f, 0x44000000)
+                      maxLines = 2
+                      ellipsize = TextUtils.TruncateAt.END
+                  }, LinearLayout.LayoutParams(WRAP, WRAP).apply { topMargin = dp(2) })
                   return box
               }
 
@@ -2867,16 +2893,30 @@ jobs:
                           intArrayOf(0xFF5EEAD4.toInt(), 0xFF0D9488.toInt())
                       ).apply { shape = GradientDrawable.OVAL }
                   }
-                  card.addView(badge, LinearLayout.LayoutParams(dp(24), dp(24)))
-                  card.addView(tv(greet, 21f, Color.WHITE, true).apply {
+                  val titleRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                  }
+                  titleRow.addView(badge, LinearLayout.LayoutParams(dp(22), dp(22)))
+                  titleRow.addView(tv(greet, 19f, Color.WHITE, true).apply {
                       setShadowLayer(4f, 0f, 1f, 0x55000000)
-                  }, LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(6) })
+                  }, LinearLayout.LayoutParams(WRAP, WRAP).apply { leftMargin = dp(8) })
+                  card.addView(titleRow, LinearLayout.LayoutParams(MATCH, WRAP))
                   card.addView(
-                      tv(
-                          briefText(),
-                          13f, 0xF2FFFFFF.toInt()
-                      ).apply { setShadowLayer(3f, 0f, 1f, 0x44000000) },
-                      LinearLayout.LayoutParams(MATCH, WRAP)
+                      tv(weatherLine(), 13f, 0xF2FFFFFF.toInt()).apply {
+                          setShadowLayer(3f, 0f, 1f, 0x44000000)
+                          maxLines = 1
+                          ellipsize = TextUtils.TruncateAt.END
+                      },
+                      LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(4) }
+                  )
+                  card.addView(
+                      tv(tipLine(), 13f, Color.WHITE, true).apply {
+                          setShadowLayer(3f, 0f, 1f, 0x44000000)
+                          maxLines = 2
+                          ellipsize = TextUtils.TruncateAt.END
+                      },
+                      LinearLayout.LayoutParams(MATCH, WRAP).apply { topMargin = dp(2) }
                   )
                   box.addView(card, LinearLayout.LayoutParams(MATCH, 0, 1.25f))
 
@@ -3380,7 +3420,7 @@ jobs:
                   }
               }
 
-              private fun openSearch() {
+              private fun openSearch(prefill: String = "") {
                   if (searchOverlay != null) return
                   if (groupOverlay != null) closeGroup()
 
@@ -3402,7 +3442,14 @@ jobs:
                       setPadding(dp(14), dp(8), 0, dp(8))
                       setOnClickListener { closeSearch() }
                   }
+                  val micBtn = TextView(this).apply {
+                      text = "🎙"
+                      textSize = 20f
+                      setPadding(dp(12), dp(8), dp(4), dp(8))
+                      setOnClickListener { startVoiceSearch() }
+                  }
                   bar.addView(et, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  bar.addView(micBtn, LinearLayout.LayoutParams(WRAP, WRAP))
                   bar.addView(cancel, LinearLayout.LayoutParams(WRAP, WRAP))
                   ov.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
 
@@ -3447,11 +3494,17 @@ jobs:
                       adapter.notifyDataSetChanged()
                   }
                   et.setOnEditorActionListener { _, id, _ ->
-                      if (id == EditorInfo.IME_ACTION_SEARCH && shown.isNotEmpty()) {
-                          launch(shown[0], null)
+                      if (id == EditorInfo.IME_ACTION_SEARCH) {
+                          if (shown.isNotEmpty()) {
+                              launch(shown[0], null)
+                          } else if (webQuery.isNotEmpty()) {
+                              webSearch(webQuery)
+                          }
                           true
                       } else false
                   }
+                  searchField = et
+                  if (prefill.isNotEmpty()) et.setText(prefill)
                   ov.addView(list, LinearLayout.LayoutParams(MATCH, 0, 1f).apply { topMargin = dp(8) })
 
                   content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
@@ -3476,6 +3529,7 @@ jobs:
                   hideKeyboard(ov)
                   content.removeView(ov)
                   searchOverlay = null
+                  searchField = null
               }
 
               // ================= Skins e ajustes =================
@@ -3544,6 +3598,7 @@ jobs:
               override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
                   super.onRequestPermissionsResult(requestCode, permissions, grantResults)
                   if (requestCode == 77) refreshWeather(true)
+                  if (requestCode == 78 && ::pager.isInitialized) pager.adapter?.notifyItemChanged(firstHome())
               }
 
               private fun askLocationOnce() {
@@ -3658,6 +3713,133 @@ jobs:
                   updateTemp()
                   if (todayOn()) pager.adapter?.notifyItemChanged(0)
                   if (headerActive()) pager.adapter?.notifyItemChanged(firstHome())
+              }
+
+              private fun startVoiceSearch() {
+                  val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                  i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o que deseja pesquisar")
+                  try {
+                      startActivityForResult(i, 66)
+                  } catch (_: Exception) {
+                      Toast.makeText(this, "Pesquisa por voz não disponível neste celular", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              private fun startLensSearch() {
+                  val tries = listOf("googleapp://lens", "google://lens", "https://lens.google.com/")
+                  for (u in tries) {
+                      try {
+                          startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                          return
+                      } catch (_: Exception) {
+                      }
+                  }
+                  Toast.makeText(this, "Pesquisa por imagem não disponível neste celular", Toast.LENGTH_LONG).show()
+              }
+
+              private fun webSearch(q: String) {
+                  try {
+                      startActivity(
+                          Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q)))
+                              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                      )
+                      closeSearch()
+                  } catch (_: Exception) {
+                  }
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == 66 && resultCode == RESULT_OK) {
+                      val text = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+                      if (!text.isNullOrBlank()) {
+                          if (searchOverlay != null) searchField?.setText(text) else openSearch(text)
+                      }
+                  }
+              }
+
+              // ---------- Resumo útil do dia (cartão do topo) ----------
+
+              private fun batteryInfo(): Pair<Int, Boolean> {
+                  val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                  val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                  val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+                  val st = bi?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                  val charging = st == BatteryManager.BATTERY_STATUS_CHARGING || st == BatteryManager.BATTERY_STATUS_FULL
+                  return Pair(if (level >= 0 && scale > 0) level * 100 / scale else 0, charging)
+              }
+
+              private fun freeStorage(): Float {
+                  return try {
+                      val sf = StatFs(Environment.getDataDirectory().path)
+                      sf.availableBlocksLong.toFloat() / sf.blockCountLong.toFloat()
+                  } catch (_: Exception) {
+                      1f
+                  }
+              }
+
+              private fun nextEvent(): String? {
+                  if (checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) return null
+                  return try {
+                      val now = System.currentTimeMillis()
+                      val b = CalendarContract.Instances.CONTENT_URI.buildUpon()
+                      ContentUris.appendId(b, now)
+                      ContentUris.appendId(b, now + 24L * 3600L * 1000L)
+                      val cur = contentResolver.query(
+                          b.build(),
+                          arrayOf(
+                              CalendarContract.Instances.TITLE,
+                              CalendarContract.Instances.BEGIN,
+                              CalendarContract.Instances.ALL_DAY
+                          ),
+                          null, null, CalendarContract.Instances.BEGIN + " ASC"
+                      )
+                      var out: String? = null
+                      if (cur != null) {
+                          if (cur.moveToFirst()) {
+                              val title = cur.getString(0) ?: "Compromisso"
+                              val begin = cur.getLong(1)
+                              val allDay = cur.getInt(2) == 1
+                              out = if (allDay) {
+                                  "📅 Hoje: " + title
+                              } else {
+                                  "📅 " + java.text.SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(begin)) + " · " + title
+                              }
+                          }
+                          cur.close()
+                      }
+                      out
+                  } catch (_: Exception) {
+                      null
+                  }
+              }
+
+              private fun weatherLine(): String {
+                  if (!Weather.has()) return "Buscando o tempo da sua região..."
+                  return Weather.emoji(Weather.code, Weather.isDay) + " " + Weather.fmt(Weather.temp) + "° · " +
+                      Weather.describe(Weather.code) + " · máx " + Weather.fmt(Weather.max) + "° / mín " + Weather.fmt(Weather.min) + "°"
+              }
+
+              // Uma dica prática: compromisso, bateria, chuva, calor/frio, espaço ou carregamento
+              private fun tipLine(): String {
+                  if (Cfg.b("calendarBrief")) {
+                      val ev = nextEvent()
+                      if (ev != null) return ev
+                  }
+                  val (pct, charging) = batteryInfo()
+                  if (!charging && pct <= 20) return "🔋 Bateria em " + pct + "%: conecte o carregador."
+                  if (Weather.has()) {
+                      val code = Weather.code
+                      val rain = (code in 51..67) || (code in 80..82) || (code in 95..99)
+                      if (rain) return "☔ Vai chover hoje: leve um guarda-chuva."
+                      if (Weather.temp >= 32f) return "🥵 Calor forte: beba água e evite o sol do meio-dia."
+                      if (Weather.temp <= 14f) return "🧥 Está frio: leve um casaco."
+                  }
+                  if (freeStorage() < 0.10f) return "💾 Pouco espaço livre: apague arquivos ou apps."
+                  return if (charging) "🔌 Carregando: " + pct + "%." else "✅ Tudo certo por aqui."
               }
 
               private fun briefText(): String {
@@ -3826,6 +4008,11 @@ jobs:
 
               private fun cfgChanged(key: String) {
                   cfgStamp = System.currentTimeMillis()
+                  if (key == "calendarBrief" && Cfg.b("calendarBrief") &&
+                      checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED
+                  ) {
+                      requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 78)
+                  }
                   if (key == "weather") {
                       updateTemp()
                       refreshWeather(true)
@@ -3837,7 +4024,7 @@ jobs:
                   if (key == "dockMax" || key == "skin") {
                       while (dockPkgs.size > Cfg.i("dockMax")) {
                           val p = dockPkgs.removeAt(dockPkgs.size - 1)
-                          home.add(Entry.App(p))
+                          placeNew(p)
                       }
                       fillDock()
                       normalize()
@@ -4203,6 +4390,7 @@ jobs:
 
                   c = section(list, "TEMPO E LOCALIZAÇÃO")
                   rowToggle(c, "Mostrar temperatura do tempo (usa internet)", "weather")
+                  rowToggle(c, "Mostrar próximo compromisso do calendário", "calendarBrief")
                   rowAction(c, "Atualizar temperatura agora") { refreshWeather(true) }
                   rowAction(c, "Usar localização do GPS (mais precisa)") {
                       if (hasLocPerm()) {
