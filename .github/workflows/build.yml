@@ -257,6 +257,8 @@ jobs:
                   "ios_dark" to "iOS Escuro",
                   "oneui" to "One UI (Samsung)",
                   "hyperos" to "HyperOS (Xiaomi)",
+                  "moto" to "Motorola (Hello UI)",
+                  "razer" to "Razer (Nexus)",
                   "miui" to "MIUI 14 (Xiaomi)",
                   "poco" to "POCO Launcher (Xiaomi)",
                   "classic" to "Android clássico",
@@ -300,6 +302,8 @@ jobs:
                   "calendarBrief" to false,
                   "drawerTabs" to false,
                   "dockStyle" to "glass",
+                  "font" to "sans",
+                  "transition" to "auto",
                   "gridMode" to "compact",
                   "gearStyle" to "icon",
                   "homeHeader" to "none",
@@ -353,6 +357,28 @@ jobs:
                           "animStyle" to "miui", "wiggle" to false, "swipeSearch" to false,
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
+                      "moto" -> mapOf(
+                          "iconSet" to "moto", "shape" to "squircle", "iconSize" to 70,
+                          "cols" to 4, "rows" to 6, "labelSize" to 12, "gridMode" to "free",
+                          "dockMax" to 4, "dockAlpha" to 45, "dockStyle" to "capsule", "dockRadius" to 26,
+                          "pill" to true, "pillStyle" to "bar", "homeHeader" to "none",
+                          "library" to true, "today" to true, "drawerGesture" to true,
+                          "panelStyle" to "oneui", "folderStyle" to "grid2", "folderAlpha" to 60,
+                          "animStyle" to "miui", "animPage" to true, "animPress" to true,
+                          "wiggle" to true, "swipeSearch" to true, "gear" to false, "font" to "sans",
+                          "tempHome" to false, "transition" to "slide"
+                      )
+                      "razer" -> mapOf(
+                          "iconSet" to "razer", "tint" to "dark", "shape" to "round", "iconSize" to 66,
+                          "cols" to 4, "rows" to 6, "labelSize" to 11, "gridMode" to "free", "labels" to true,
+                          "dockMax" to 5, "dockAlpha" to 55, "dockStyle" to "dark", "dockRadius" to 16,
+                          "pill" to true, "pillStyle" to "bar", "homeHeader" to "none",
+                          "library" to true, "today" to false, "drawerGesture" to true, "drawerTabs" to true,
+                          "panelStyle" to "oneui", "folderStyle" to "grid3", "folderAlpha" to 35,
+                          "animStyle" to "miui", "animPage" to true, "animPress" to true,
+                          "wiggle" to false, "swipeSearch" to true, "gear" to false, "font" to "mono",
+                          "tempHome" to false, "transition" to "zoom", "dim" to 10
+                      )
                       "miui" -> mapOf(
                           "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "flush", "iconSize" to 68, "cols" to 4, "rows" to 6,
                           "labelSize" to 12, "dockAlpha" to 30, "dockRadius" to 22, "pill" to false,
@@ -393,6 +419,41 @@ jobs:
                   e.putString("skin", name)
                   e.apply()
               }
+          }
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/Fonts.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          import android.graphics.Typeface
+
+          // Uma única origem para as fontes do launcher (evita fontes diferentes em cada celular)
+          object Fonts {
+              var style = "sans"
+              private val cache = HashMap<String, Typeface>()
+
+              private fun family(weight: Int): Typeface {
+                  val key = style + weight
+                  cache[key]?.let { return it }
+                  val t = when (style) {
+                      "mono" -> Typeface.create("monospace", if (weight >= 600) Typeface.BOLD else Typeface.NORMAL)
+                      "serif" -> Typeface.create("serif", if (weight >= 600) Typeface.BOLD else Typeface.NORMAL)
+                      "rounded" -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                      else -> when {
+                          weight >= 600 -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                          weight <= 200 -> Typeface.create("sans-serif-thin", Typeface.NORMAL)
+                          weight <= 300 -> Typeface.create("sans-serif-light", Typeface.NORMAL)
+                          else -> Typeface.create("sans-serif", Typeface.NORMAL)
+                      }
+                  }
+                  cache[key] = t
+                  return t
+              }
+
+              fun regular(): Typeface = family(400)
+              fun medium(): Typeface = family(600)
+              fun bold(): Typeface = family(700)
+              fun light(): Typeface = family(300)
+              fun thin(): Typeface = family(200)
           }
           EOF_FILE
           cat > proj/app/src/main/java/com/ioslauncher/Weather.kt <<'EOF_FILE'
@@ -568,7 +629,7 @@ jobs:
                               floatArrayOf(0f, 0.35f, 0.65f, 1f), Shader.TileMode.CLAMP
                           )
                           p.textSize = h * 0.95f
-                          p.typeface = Typeface.DEFAULT_BOLD
+                          p.typeface = Fonts.bold()
                           p.textAlign = Paint.Align.CENTER
                           c.drawText("G", w / 2f, h * 0.82f, p)
                           p.shader = null
@@ -645,6 +706,11 @@ jobs:
                           Blob(0.25f, 0.8f, 0.6f, 0xCCFFF0F7.toInt()),
                           Blob(0.9f, 0.55f, 0.5f, 0xAAC77DFF.toInt())
                       )
+                  )
+
+                  fun dark() = SoftWallpaper(
+                      0xFF0B0B0B.toInt(), 0xFF000000.toInt(),
+                      listOf(Blob(0.85f, 0.15f, 0.55f, 0x6644D62C.toInt()))
                   )
 
                   fun blue() = SoftWallpaper(
@@ -776,6 +842,8 @@ jobs:
               private val miui get() = iconSet == "miui"
               private val poco get() = iconSet == "poco"
               private val mono get() = iconSet == "mono"
+              private val moto get() = iconSet == "moto"
+              private val razer get() = iconSet == "razer"
 
 
               private val SIZE = 192
@@ -890,8 +958,10 @@ jobs:
                   val special = kind == "phone" || kind == "messages" || kind == "camera" || kind == "settings" ||
                       kind == "browser" || kind == "photos" || kind == "calendar" || kind == "notes"
                   when {
-                      kind == "default" -> if (mono) monoWrap(c) else wrap(c)
+                      kind == "default" -> if (mono) monoWrap(c) else if (moto || razer) themedWrap(c) else wrap(c)
                       iconSet == "ios" || (oneui && special) -> classic(c)
+                      moto -> themed(c)
+                      razer -> themed(c)
                       else -> themed(c)
                   }
                   val out = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
@@ -1064,6 +1134,16 @@ jobs:
                           glyphColor = mix(accent, Color.WHITE, 0.25f)
                           punchColor = k(0xFF1F1F26)
                       }
+                      moto -> {
+                          gradient(c, k(0xFF2A2F3A), k(0xFF10131A))
+                          glyphColor = mix(accent, Color.WHITE, 0.35f)
+                          punchColor = k(0xFF10131A)
+                      }
+                      razer -> {
+                          c.drawColor(k(0xFF0B0B0B))
+                          glyphColor = k(0xFF44D62C)
+                          punchColor = k(0xFF0B0B0B)
+                      }
                       mono -> {
                           c.drawColor(Color.argb(70, 255, 255, 255))
                           glyphColor = Color.WHITE
@@ -1081,6 +1161,27 @@ jobs:
                   val p = Paint(Paint.ANTI_ALIAS_FLAG)
                   if (mono) p.xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) else p.color = punchColor
                   drawGlyph(c, g, p, miui)
+              }
+
+              // Motorola e Razer: o app vira um fundo escuro com um anel colorido ao redor do ícone real
+              private fun themedWrap(c: Canvas) {
+                  val accent = if (razer) k(0xFF44D62C) else k(0xFF5AA9FF)
+                  if (razer) c.drawColor(k(0xFF0B0B0B)) else gradient(c, k(0xFF2A2F3A), k(0xFF10131A))
+                  val ring = Paint(Paint.ANTI_ALIAS_FLAG)
+                  ring.style = Paint.Style.STROKE
+                  ring.strokeWidth = 10f
+                  ring.color = accent
+                  c.drawCircle(128f, 128f, 104f, ring)
+                  val b = base
+                  c.save()
+                  c.clipPath(Path().apply { addCircle(128f, 128f, 96f, Path.Direction.CW) })
+                  if (b is AdaptiveIconDrawable) {
+                      b.background?.let { it.setBounds(-64, -64, 320, 320); it.draw(c) }
+                      b.foreground?.let { drawFitted(c, it, true) }
+                  } else {
+                      drawFitted(c, b, false)
+                  }
+                  c.restore()
               }
 
               // g = cor do desenho, p = cor do "furo", o = desenho só com contorno (Xiaomi)
@@ -1178,7 +1279,7 @@ jobs:
                           val t = Paint(if (o) fill else p)
                           t.style = Paint.Style.FILL
                           t.textAlign = Paint.Align.CENTER
-                          t.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                          t.typeface = Fonts.medium()
                           t.textSize = 84f
                           c.drawText(SimpleDateFormat("d", Locale.getDefault()).format(Date()), 128f, 178f, t)
                       }
@@ -1442,12 +1543,12 @@ jobs:
                   val t1 = pt(k(0xFFFF3B30))
                   t1.textSize = 40f
                   t1.textAlign = Paint.Align.CENTER
-                  t1.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                  t1.typeface = Fonts.medium()
                   c.drawText(wd, 128f, 78f, t1)
                   val t2 = pt(k(0xFF1C1C1E))
                   t2.textSize = 150f
                   t2.textAlign = Paint.Align.CENTER
-                  t2.typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                  t2.typeface = Fonts.light()
                   c.drawText(dd, 128f, 206f, t2)
               }
 
@@ -1708,6 +1809,7 @@ jobs:
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
                   Cfg.init(this)
+                  Fonts.style = Cfg.s("font")
                   Weather.load(this)
                   store = Store(this)
                   rows = if (Cfg.i("rows") > 0) Cfg.i("rows") else getSharedPreferences("misc", MODE_PRIVATE).getInt("autoRows", 5)
@@ -1727,10 +1829,48 @@ jobs:
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
                   pager.setPageTransformer { page, position ->
-                      val a = if (Cfg.b("animPage")) Math.min(Math.abs(position), 1f) else 0f
-                      val sc = 1f - 0.06f * a
-                      page.scaleX = sc
-                      page.scaleY = sc
+                      if (!Cfg.b("animPage")) {
+                          page.alpha = 1f; page.scaleX = 1f; page.scaleY = 1f; page.translationX = 0f
+                          page.rotationY = 0f; page.translationY = 0f
+                          return@setPageTransformer
+                      }
+                      val a = Math.min(Math.abs(position), 1f)
+                      when (transitionKind()) {
+                          "slide" -> {
+                              page.alpha = 1f; page.scaleX = 1f; page.scaleY = 1f
+                              page.translationX = -position * page.width * 0.15f
+                          }
+                          "zoom" -> {
+                              val sc = 1f - 0.12f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.35f * a
+                          }
+                          "cube" -> {
+                              page.pivotX = if (position < 0) page.width.toFloat() else 0f
+                              page.pivotY = page.height / 2f
+                              page.rotationY = -90f * position.coerceIn(-1f, 1f)
+                              page.alpha = 1f - 0.2f * a
+                          }
+                          "fade" -> {
+                              page.alpha = 1f - a
+                              page.translationX = 0f
+                          }
+                          "depth" -> {
+                              val sc = 1f - 0.1f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.translationX = if (position > 0) -position * page.width * 0.2f else 0f
+                              page.alpha = 1f - 0.5f * a
+                          }
+                          "ios" -> {
+                              val sc = 1f - 0.06f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.5f * a
+                          }
+                          else -> {
+                              val sc = 1f - 0.06f * a
+                              page.scaleX = sc; page.scaleY = sc
+                          }
+                      }
                   }
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
@@ -1805,7 +1945,7 @@ jobs:
                   doneBtn = TextView(this).apply {
                       text = "OK"
                       textSize = 15f
-                      typeface = Typeface.DEFAULT_BOLD
+                      typeface = Fonts.bold()
                       setTextColor(Color.WHITE)
                       background = rounded(0x66000000, dp(16))
                       setPadding(dp(18), dp(6), dp(18), dp(6))
@@ -1831,7 +1971,7 @@ jobs:
                       textSize = 13f
                       setTextColor(Color.WHITE)
                       setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
-                      typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                      typeface = Fonts.medium()
                   }
                   barRow.addView(tempView, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL).apply {
                       setMargins(0, 0, dp(16), 0)
@@ -2437,7 +2577,7 @@ jobs:
                   return TextView(this).apply {
                       this.text = text
                       textSize = Cfg.i("labelSize").toFloat()
-                      typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                      typeface = Fonts.medium()
                       setTextColor(color)
                       if (color == Color.WHITE) setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
                       maxLines = 1
@@ -2464,7 +2604,7 @@ jobs:
                               val badge = TextView(this).apply {
                                   text = "−"
                                   textSize = 15f
-                                  typeface = Typeface.DEFAULT_BOLD
+                                  typeface = Fonts.bold()
                                   setTextColor(Color.WHITE)
                                   gravity = Gravity.CENTER
                                   background = GradientDrawable().apply {
@@ -2833,7 +2973,7 @@ jobs:
                       format24Hour = "HH:mm"
                       format12Hour = "h:mm"
                       textSize = 64f
-                      typeface = Typeface.create("sans-serif-thin", Typeface.NORMAL)
+                      typeface = Fonts.thin()
                       setTextColor(Color.WHITE)
                       setShadowLayer(6f, 0f, 1f, 0x44000000)
                       includeFontPadding = false
@@ -2978,7 +3118,7 @@ jobs:
                       this.text = text
                       textSize = size
                       setTextColor(color)
-                      if (bold) typeface = Typeface.DEFAULT_BOLD
+                      if (bold) typeface = Fonts.bold()
                   }
               }
 
@@ -2999,7 +3139,7 @@ jobs:
                       format24Hour = "HH:mm"
                       format12Hour = "h:mm"
                       textSize = 56f
-                      typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                      typeface = Fonts.light()
                       setTextColor(Color.WHITE)
                       setShadowLayer(6f, 0f, 1f, 0x66000000)
                   }, LinearLayout.LayoutParams(MATCH, WRAP))
@@ -3027,7 +3167,7 @@ jobs:
                   cal.addView(tv(
                       java.text.SimpleDateFormat("d", Locale.getDefault()).format(now),
                       58f, 0xFF111111.toInt()
-                  ).apply { typeface = Typeface.create("sans-serif-light", Typeface.NORMAL) })
+                  ).apply { typeface = Fonts.light() })
                   cal.addView(tv(
                       java.text.SimpleDateFormat("MMMM yyyy", Locale.getDefault()).format(now),
                       13f, 0xFF6B6B6B.toInt()
@@ -3048,7 +3188,7 @@ jobs:
                   }
                   bat.addView(tv("Bateria", 13f, 0xFFBBBBBB.toInt(), true))
                   bat.addView(tv("$pct%", 40f, Color.WHITE).apply {
-                      typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                      typeface = Fonts.light()
                   })
                   bat.addView(tv(if (charging) "Carregando" else "Em uso", 13f, 0xFFBBBBBB.toInt()))
                   bat.addView(
@@ -3075,7 +3215,7 @@ jobs:
                           "-- °C"
                       }
                       tc.addView(tv(big, 44f, Color.WHITE).apply {
-                          typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+                          typeface = Fonts.light()
                       })
                       val sub = if (Weather.has()) {
                           Weather.describe(Weather.code) + " · Máx " + Weather.fmt(Weather.max) + "° · Mín " + Weather.fmt(Weather.min) + "°"
@@ -3848,6 +3988,20 @@ jobs:
                       Weather.fmt(Weather.max) + "° e mínima de " + Weather.fmt(Weather.min) + "°."
               }
 
+              // Estilo de transição: "auto" segue a skin
+              private fun transitionKind(): String {
+                  val t = Cfg.s("transition")
+                  if (t != "auto") return t
+                  return when (Cfg.s("skin")) {
+                      "oneui" -> "depth"
+                      "moto" -> "slide"
+                      "razer" -> "zoom"
+                      "miui", "hyperos", "poco" -> "cube"
+                      "classic" -> "fade"
+                      else -> "ios"
+                  }
+              }
+
               private fun glass(pct: Int): Int {
                   val a = pct.coerceIn(0, 100) * 255 / 100
                   return if (Cfg.s("tint") == "dark") Color.argb(a, 0, 0, 0) else Color.argb(a, 255, 255, 255)
@@ -3858,6 +4012,7 @@ jobs:
                   val wp: Drawable? = when (Cfg.s("wallpaper")) {
                       "pink" -> SoftWallpaper.pink()
                       "blue" -> SoftWallpaper.blue()
+                      "dark" -> SoftWallpaper.dark()
                       else -> null
                   }
                   return if (wp == null) dimColor else LayerDrawable(arrayOf(wp, dimColor))
@@ -4008,6 +4163,7 @@ jobs:
 
               private fun cfgChanged(key: String) {
                   cfgStamp = System.currentTimeMillis()
+                  Fonts.style = Cfg.s("font")
                   if (key == "calendarBrief" && Cfg.b("calendarBrief") &&
                       checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED
                   ) {
@@ -4310,6 +4466,16 @@ jobs:
                           "free" to "Livre (cada ícone fica onde você deixar)"
                       )
                   )
+                  rowChoice(
+                      c, "Fonte dos textos", "font",
+                      listOf(
+                          "sans" to "Padrão do celular (sans)", "rounded" to "Arredondada (Motorola)",
+                          "mono" to "Monoespaçada (Razer)", "serif" to "Serifada (clássica)"
+                      )
+                  ) { v ->
+                      Cfg.put("font", v)
+                      cfgChanged("font")
+                  }
                   rowSeek(c, "Tamanho do ícone", "iconSize", 50, 90, "%")
                   rowSeek(c, "Colunas", "cols", 3, 6, "")
                   rowSeek(c, "Linhas", "rows", 0, 8, "", "Automático")
@@ -4347,7 +4513,7 @@ jobs:
                   rowSeek(c, "Escurecer o fundo", "dim", 0, 60, "%")
                   rowChoice(
                       c, "Papel de parede do launcher", "wallpaper",
-                      listOf("system" to "O do meu celular", "pink" to "Rosa (One UI)", "blue" to "Azul (iOS)")
+                      listOf("system" to "O do meu celular", "pink" to "Rosa (One UI)", "blue" to "Azul (iOS)", "dark" to "Escuro (Razer)")
                   )
                   rowChoice(
                       c, "Widgets no topo da tela inicial", "homeHeader",
@@ -4387,6 +4553,15 @@ jobs:
                   rowToggle(c, "Animação ao abrir apps", "animLaunch")
                   rowToggle(c, "Animação ao tocar", "animPress")
                   rowToggle(c, "Efeito ao trocar de página", "animPage")
+                  rowChoice(
+                      c, "Estilo da transição de página", "transition",
+                      listOf(
+                          "auto" to "Automático (conforme a skin)", "ios" to "iPhone (zoom leve)",
+                          "slide" to "Deslizar (Motorola)", "zoom" to "Zoom forte (Razer)",
+                          "cube" to "Cubo 3D (Xiaomi)", "depth" to "Profundidade (One UI)",
+                          "fade" to "Desvanecer", "none" to "Nenhum"
+                      )
+                  )
 
                   c = section(list, "TEMPO E LOCALIZAÇÃO")
                   rowToggle(c, "Mostrar temperatura do tempo (usa internet)", "weather")
@@ -4495,7 +4670,7 @@ jobs:
                   bar.addView(TextView(this).apply {
                       text = "Ajustes do iLauncher"
                       textSize = 18f
-                      typeface = Typeface.DEFAULT_BOLD
+                      typeface = Fonts.bold()
                       setTextColor(Color.BLACK)
                       gravity = Gravity.CENTER
                   }, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER))
