@@ -1828,50 +1828,7 @@ jobs:
                   (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
-                  pager.setPageTransformer { page, position ->
-                      if (!Cfg.b("animPage")) {
-                          page.alpha = 1f; page.scaleX = 1f; page.scaleY = 1f; page.translationX = 0f
-                          page.rotationY = 0f; page.translationY = 0f
-                          return@setPageTransformer
-                      }
-                      val a = Math.min(Math.abs(position), 1f)
-                      when (transitionKind()) {
-                          "slide" -> {
-                              page.alpha = 1f; page.scaleX = 1f; page.scaleY = 1f
-                              page.translationX = -position * page.width * 0.15f
-                          }
-                          "zoom" -> {
-                              val sc = 1f - 0.12f * a
-                              page.scaleX = sc; page.scaleY = sc
-                              page.alpha = 1f - 0.35f * a
-                          }
-                          "cube" -> {
-                              page.pivotX = if (position < 0) page.width.toFloat() else 0f
-                              page.pivotY = page.height / 2f
-                              page.rotationY = -90f * position.coerceIn(-1f, 1f)
-                              page.alpha = 1f - 0.2f * a
-                          }
-                          "fade" -> {
-                              page.alpha = 1f - a
-                              page.translationX = 0f
-                          }
-                          "depth" -> {
-                              val sc = 1f - 0.1f * a
-                              page.scaleX = sc; page.scaleY = sc
-                              page.translationX = if (position > 0) -position * page.width * 0.2f else 0f
-                              page.alpha = 1f - 0.5f * a
-                          }
-                          "ios" -> {
-                              val sc = 1f - 0.06f * a
-                              page.scaleX = sc; page.scaleY = sc
-                              page.alpha = 1f - 0.5f * a
-                          }
-                          else -> {
-                              val sc = 1f - 0.06f * a
-                              page.scaleX = sc; page.scaleY = sc
-                          }
-                      }
-                  }
+                  applyPageTransformer()
                   pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
                       override fun onPageSelected(position: Int) {
                           updateDots(position)
@@ -3997,6 +3954,55 @@ jobs:
                       Weather.fmt(Weather.max) + "° e mínima de " + Weather.fmt(Weather.min) + "°."
               }
 
+              // Transições só mudam escala, transparência e rotação. Nunca deslocam a página
+              // (deslocar a página soma com o próprio pager e faz a página vizinha aparecer por cima).
+              private fun applyPageTransformer() {
+                  if (!::pager.isInitialized) return
+                  val kind = transitionKind()
+                  if (!Cfg.b("animPage") || kind == "none") {
+                      pager.setPageTransformer(null)
+                      return
+                  }
+                  pager.setPageTransformer { page, position ->
+                      val a = Math.min(Math.abs(position), 1f)
+                      page.translationX = 0f
+                      page.translationY = 0f
+                      page.rotationY = 0f
+                      page.pivotX = page.width / 2f
+                      page.pivotY = page.height / 2f
+                      when (kind) {
+                          "slide" -> {
+                              page.scaleX = 1f; page.scaleY = 1f
+                              page.alpha = 1f - 0.25f * a
+                          }
+                          "zoom" -> {
+                              val sc = 1f - 0.12f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.35f * a
+                          }
+                          "cube" -> {
+                              page.pivotX = if (position < 0) page.width.toFloat() else 0f
+                              page.rotationY = -60f * position.coerceIn(-1f, 1f)
+                              page.alpha = 1f - 0.2f * a
+                          }
+                          "fade" -> {
+                              page.scaleX = 1f; page.scaleY = 1f
+                              page.alpha = 1f - a
+                          }
+                          "depth" -> {
+                              val sc = 1f - 0.1f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.5f * a
+                          }
+                          else -> {
+                              val sc = 1f - 0.06f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.5f * a
+                          }
+                      }
+                  }
+              }
+
               // Estilo de transição: "auto" segue a skin
               private fun transitionKind(): String {
                   val t = Cfg.s("transition")
@@ -4173,6 +4179,7 @@ jobs:
               private fun cfgChanged(key: String) {
                   cfgStamp = System.currentTimeMillis()
                   Fonts.style = Cfg.s("font")
+                  applyPageTransformer()
                   if (key == "calendarBrief" && Cfg.b("calendarBrief") &&
                       checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED
                   ) {
