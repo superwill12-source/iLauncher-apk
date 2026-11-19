@@ -2275,6 +2275,7 @@ jobs:
 
               private fun applyGrid() {
                   if (System.currentTimeMillis() - cfgStamp < 2000L || pager.height > maxPagerH) maxPagerH = pager.height
+                  if (cfgStamp > 0L && System.currentTimeMillis() - cfgStamp < 2000L) maxPagerH = pager.height
                   val h = maxPagerH
                   val fixed = Cfg.i("rows")
                   val newRows = if (fixed > 0) fixed else if (h > 0) ((h - dp(16)) / cellH()).coerceIn(3, 6) else rows
@@ -2285,7 +2286,15 @@ jobs:
                   }
               }
 
+              private var builtCols = -1
+              private var builtRows = -1
+
               private fun rebuild() {
+                  if (builtCols != COLS || builtRows != rows) {
+                      builtCols = COLS
+                      builtRows = rows
+                      pager.adapter = PageAdapter()
+                  }
                   val per = COLS * rows
                   val first = firstPageSize()
                   val pages = mutableListOf<List<Entry>>()
@@ -2576,6 +2585,8 @@ jobs:
               private fun labelView(text: String, color: Int = Color.WHITE): TextView {
                   return TextView(this).apply {
                       this.text = text
+                      isSingleLine = true
+                      includeFontPadding = false
                       textSize = Cfg.i("labelSize").toFloat()
                       typeface = Fonts.medium()
                       setTextColor(color)
@@ -2853,6 +2864,8 @@ jobs:
                   val root = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setPadding(dp(8), dp(8), dp(8), 0)
+                      clipChildren = true
+                      clipToPadding = true
                   }
                   val items = homePages.getOrNull(hp) ?: emptyList()
                   if (!editing) {
@@ -2875,11 +2888,7 @@ jobs:
                           if (e != null && e !== Entry.Gap) {
                               slot.addView(
                                   entryCell(e),
-                                  FrameLayout.LayoutParams(
-                                      resources.displayMetrics.widthPixels / COLS - dp(6),
-                                      WRAP,
-                                      Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                                  )
+                                  FrameLayout.LayoutParams(MATCH, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
                               )
                           } else if (editing) {
                               val ph = View(this)
