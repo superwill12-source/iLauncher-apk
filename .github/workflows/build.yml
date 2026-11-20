@@ -340,7 +340,8 @@ jobs:
                   val over: Map<String, Any> = when (name) {
                       "ios_dark" -> mapOf("tint" to "dark", "dockAlpha" to 45, "dim" to 15)
                       "oneui" -> mapOf(
-                          "iconSet" to "oneui", "gridMode" to "free", "dockStyle" to "none", "shape" to "squircle", "iconSize" to 68,
+                          "wallpaper" to "pink",
+                          "iconSet" to "oneui", "gridMode" to "free", "dockStyle" to "oneui", "shape" to "squircle", "iconSize" to 68,
                           "cols" to 4, "rows" to 5, "labelSize" to 11,
                           "dockMax" to 4, "dockAlpha" to 0, "dockRadius" to 28,
                           "pillStyle" to "bar", "panelStyle" to "oneui", "homeHeader" to "oneui",
@@ -350,7 +351,8 @@ jobs:
                           "animPress" to true, "gear" to false, "tempHome" to false
                       )
                       "hyperos" -> mapOf(
-                          "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "capsule", "shape" to "squircle", "iconSize" to 70,
+                          "wallpaper" to "hyperos",
+                          "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "hyperos", "shape" to "squircle", "iconSize" to 70,
                           "cols" to 4, "rows" to 6, "labelSize" to 12,
                           "dockMax" to 4, "dockAlpha" to 28, "dockRadius" to 30, "pill" to false,
                           "homeHeader" to "xiaomi", "panelStyle" to "oneui", "folderStyle" to "grid3",
@@ -359,9 +361,10 @@ jobs:
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "moto" -> mapOf(
+                          "wallpaper" to "moto",
                           "iconSet" to "moto", "shape" to "squircle", "iconSize" to 70,
                           "cols" to 4, "rows" to 6, "labelSize" to 12, "gridMode" to "free",
-                          "dockMax" to 4, "dockAlpha" to 45, "dockStyle" to "capsule", "dockRadius" to 26,
+                          "dockMax" to 4, "dockAlpha" to 45, "dockStyle" to "moto", "dockRadius" to 26,
                           "pill" to true, "pillStyle" to "bar", "homeHeader" to "none",
                           "library" to true, "today" to true, "drawerGesture" to true,
                           "panelStyle" to "oneui", "folderStyle" to "grid2", "folderAlpha" to 60,
@@ -370,9 +373,10 @@ jobs:
                           "tempHome" to false, "transition" to "slide"
                       )
                       "razer" -> mapOf(
+                          "wallpaper" to "dark",
                           "iconSet" to "razer", "tint" to "dark", "shape" to "round", "iconSize" to 66,
                           "cols" to 4, "rows" to 6, "labelSize" to 11, "gridMode" to "free", "labels" to true,
-                          "dockMax" to 5, "dockAlpha" to 55, "dockStyle" to "dark", "dockRadius" to 16,
+                          "dockMax" to 5, "dockAlpha" to 55, "dockStyle" to "razer", "dockRadius" to 16,
                           "pill" to true, "pillStyle" to "bar", "homeHeader" to "none",
                           "library" to true, "today" to false, "drawerGesture" to true, "drawerTabs" to true,
                           "panelStyle" to "oneui", "folderStyle" to "grid3", "folderAlpha" to 35,
@@ -381,14 +385,16 @@ jobs:
                           "tempHome" to false, "transition" to "zoom", "dim" to 10
                       )
                       "miui" -> mapOf(
-                          "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "flush", "iconSize" to 68, "cols" to 4, "rows" to 6,
+                          "wallpaper" to "miui",
+                          "iconSet" to "miui", "gridMode" to "free", "dockStyle" to "miui", "iconSize" to 68, "cols" to 4, "rows" to 6,
                           "labelSize" to 12, "dockAlpha" to 30, "dockRadius" to 22, "pill" to false,
                           "panelStyle" to "oneui", "folderStyle" to "grid3", "folderAlpha" to 50,
                           "library" to false, "animStyle" to "miui", "wiggle" to false,
                           "swipeSearch" to true, "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "poco" -> mapOf(
-                          "iconSet" to "poco", "gridMode" to "free", "dockStyle" to "dark", "iconSize" to 66, "cols" to 4, "rows" to 6,
+                          "wallpaper" to "poco",
+                          "iconSet" to "poco", "gridMode" to "free", "dockStyle" to "poco", "iconSize" to 66, "cols" to 4, "rows" to 6,
                           "labelSize" to 11, "tint" to "dark", "dockMax" to 5, "dockAlpha" to 40,
                           "dockRadius" to 26, "pill" to false, "library" to false, "today" to false,
                           "drawerGesture" to true, "drawerTabs" to true, "folderAlpha" to 45,
@@ -396,12 +402,14 @@ jobs:
                           "animPage" to false, "gear" to false, "tempHome" to false
                       )
                       "classic" -> mapOf(
-                          "iconSet" to "original", "gridMode" to "free", "dockStyle" to "flush", "dockRadius" to 0, "shape" to "circle", "iconSize" to 64, "cols" to 5,
+                          "wallpaper" to "system",
+                          "iconSet" to "original", "gridMode" to "free", "dockStyle" to "classic", "dockRadius" to 0, "shape" to "circle", "iconSize" to 64, "cols" to 5,
                           "labelSize" to 12, "tint" to "dark", "dockAlpha" to 55, "today" to false,
                           "pill" to false, "wiggle" to false, "animLaunch" to false, "animPage" to false,
                           "animPress" to false, "drawerGesture" to true
                       )
                       "minimal" -> mapOf(
+                          "wallpaper" to "system",
                           "iconSet" to "mono", "dockStyle" to "none", "shape" to "round", "labels" to false, "iconSize" to 70, "pill" to false,
                           "dots" to false, "today" to false, "dockAlpha" to 20
                       ,
@@ -707,6 +715,26 @@ jobs:
                           Blob(0.25f, 0.8f, 0.6f, 0xCCFFF0F7.toInt()),
                           Blob(0.9f, 0.55f, 0.5f, 0xAAC77DFF.toInt())
                       )
+                  )
+
+                  fun moto() = SoftWallpaper(
+                      0xFF1B2A44.toInt(), 0xFF070B14.toInt(),
+                      listOf(Blob(0.15f, 0.2f, 0.7f, 0x6633B5FF.toInt()), Blob(0.9f, 0.85f, 0.6f, 0x552F80ED.toInt()))
+                  )
+
+                  fun hyperos() = SoftWallpaper(
+                      0xFF0B1B3A.toInt(), 0xFF1E0B3A.toInt(),
+                      listOf(Blob(0.2f, 0.25f, 0.6f, 0x887C4DFF.toInt()), Blob(0.85f, 0.7f, 0.55f, 0x6600D4FF.toInt()))
+                  )
+
+                  fun poco() = SoftWallpaper(
+                      0xFF1A0F2E.toInt(), 0xFF05050A.toInt(),
+                      listOf(Blob(0.8f, 0.15f, 0.6f, 0x66FFD400.toInt()), Blob(0.1f, 0.85f, 0.5f, 0x44FF3D7F.toInt()))
+                  )
+
+                  fun miui() = SoftWallpaper(
+                      0xFFFFF4E6.toInt(), 0xFFFFD6A5.toInt(),
+                      listOf(Blob(0.75f, 0.2f, 0.6f, 0x88FF8A00.toInt()), Blob(0.2f, 0.9f, 0.5f, 0x66FFFFFF.toInt()))
                   )
 
                   fun dark() = SoftWallpaper(
@@ -4086,6 +4114,10 @@ jobs:
                       "pink" -> SoftWallpaper.pink()
                       "blue" -> SoftWallpaper.blue()
                       "dark" -> SoftWallpaper.dark()
+                      "moto" -> SoftWallpaper.moto()
+                      "hyperos" -> SoftWallpaper.hyperos()
+                      "poco" -> SoftWallpaper.poco()
+                      "miui" -> SoftWallpaper.miui()
                       else -> null
                   }
                   return if (wp == null) dimColor else LayerDrawable(arrayOf(wp, dimColor))
@@ -4093,6 +4125,7 @@ jobs:
 
               // Cada skin tem um dock com formato proprio
               // Cada estilo de dock tem forma, cor, margem e altura próprias
+              // Cada estilo de dock tem forma, cor, brilho e margens próprios
               private fun styleDock() {
                   val style = Cfg.s("dockStyle")
                   val dark = Cfg.s("tint") == "dark"
@@ -4105,32 +4138,55 @@ jobs:
                   var pad = 10
                   var elev = 0f
                   when (style) {
-                      "none" -> {
-                          // One UI: sem fundo, os ícones flutuam sobre o papel de parede
+                      "none", "oneui" -> {
                           d.setColor(Color.TRANSPARENT)
                           ml = 6; mr = 6; mb = 4; pad = 4
                       }
-                      "capsule" -> {
-                          // HyperOS / Motorola: cápsula clara e flutuante
-                          d.setColor(if (dark) Color.argb(230, 40, 40, 46) else Color.argb(Math.max(a, 80) * 255 / 100, 255, 255, 255))
+                      "hyperos", "capsule" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = if (dark) intArrayOf(0xF0262630.toInt(), 0xF0141419.toInt())
+                              else intArrayOf(0xF7FFFFFF.toInt(), 0xE8E6ECF5.toInt())
                           d.cornerRadius = dp(60).toFloat()
-                          d.setStroke(dp(1), Color.argb(50, 0, 0, 0))
+                          d.setStroke(dp(1), Color.argb(40, 0, 0, 0))
                           ml = 18; mr = 18; mb = 12; pad = 12
+                          elev = dp(8).toFloat()
+                      }
+                      "moto" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = intArrayOf(0xEE2A2F3A.toInt(), 0xEE10131A.toInt())
+                          d.cornerRadius = dp(24).toFloat()
+                          d.setStroke(dp(2), 0xFF33B5FF.toInt())
+                          ml = 14; mr = 14; mb = 12; pad = 12
+                          elev = dp(4).toFloat()
+                      }
+                      "razer", "dark" -> {
+                          d.setColor(0xFF0A0A0A.toInt())
+                          d.cornerRadius = dp(14).toFloat()
+                          d.setStroke(dp(2), 0xFF44D62C.toInt())
+                          ml = 10; mr = 10; mb = 10; pad = 10
+                          elev = dp(10).toFloat()
+                      }
+                      "miui", "flush" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = intArrayOf(0xFAF7F7FA.toInt(), 0xFAE4E6EC.toInt())
+                          d.cornerRadii = floatArrayOf(dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), 0f, 0f, 0f, 0f)
+                          d.setStroke(dp(1), 0x44FF8A00)
+                          ml = 0; mr = 0; mb = 0; pad = 16
                           elev = dp(6).toFloat()
                       }
-                      "flush" -> {
-                          // MIUI / Android clássico: barra inteira, rente à borda de baixo
-                          d.setColor(if (dark) Color.argb(235, 20, 20, 24) else Color.argb(Math.max(a, 85) * 255 / 100, 245, 245, 247))
-                          d.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-                          d.setStroke(dp(1), Color.argb(40, 128, 128, 128))
-                          ml = 0; mr = 0; mb = 0; pad = 14
+                      "poco" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = intArrayOf(0xF22C2C35.toInt(), 0xF217171C.toInt())
+                          d.cornerRadius = dp(26).toFloat()
+                          d.setStroke(dp(1), 0x99FFD400.toInt())
+                          ml = 12; mr = 12; mb = 10; pad = 12
+                          elev = dp(6).toFloat()
                       }
-                      "dark" -> {
-                          // POCO / Razer: bloco escuro sólido com contorno fino
-                          d.setColor(Color.argb(Math.max(a, 75) * 255 / 100, 14, 14, 18))
-                          d.cornerRadius = r
-                          d.setStroke(dp(1), Color.argb(70, 255, 255, 255))
-                          ml = 12; mr = 12; mb = 10; pad = 10
+                      "classic" -> {
+                          d.setColor(if (dark) 0xFF1C1C20.toInt() else 0xFFF0F0F2.toInt())
+                          d.cornerRadius = 0f
+                          d.setStroke(dp(1), 0xFFC8C8CC.toInt())
+                          ml = 0; mr = 0; mb = 0; pad = 10
                       }
                       else -> {
                           // iPhone: vidro translúcido arredondado
@@ -4564,8 +4620,9 @@ jobs:
                       c, "Formato do dock", "dockStyle",
                       listOf(
                           "glass" to "Vidro arredondado (iPhone)", "none" to "Sem fundo (One UI)",
-                          "capsule" to "Cápsula flutuante (HyperOS)", "flush" to "Barra rente à borda (MIUI)",
-                          "dark" to "Vidro escuro (POCO)"
+                          "hyperos" to "Cápsula clara com sombra (HyperOS)", "moto" to "Grafite com contorno azul (Motorola)",
+                          "razer" to "Preto com borda verde neon (Razer)", "miui" to "Barra clara rente à borda (MIUI)",
+                          "poco" to "Grafite com linha amarela (POCO)", "classic" to "Barra plana (Android clássico)"
                       )
                   )
                   rowSeek(c, "Arredondamento do dock", "dockRadius", 0, 40, "")
@@ -4585,7 +4642,12 @@ jobs:
                   rowSeek(c, "Escurecer o fundo", "dim", 0, 60, "%")
                   rowChoice(
                       c, "Papel de parede do launcher", "wallpaper",
-                      listOf("system" to "O do meu celular", "pink" to "Rosa (One UI)", "blue" to "Azul (iOS)", "dark" to "Escuro (Razer)")
+                      listOf(
+                          "system" to "O do meu celular", "pink" to "Rosa (One UI)", "blue" to "Azul (iOS)",
+                          "dark" to "Escuro verde (Razer)", "moto" to "Azul noturno (Motorola)",
+                          "hyperos" to "Roxo e ciano (HyperOS)", "poco" to "Amarelo neon (POCO)",
+                          "miui" to "Pêssego claro (MIUI)"
+                      )
                   )
                   rowChoice(
                       c, "Widgets no topo da tela inicial", "homeHeader",
