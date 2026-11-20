@@ -88,6 +88,7 @@ jobs:
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
               <queries>
+                  <package android:name="com.google.android.googlequicksearchbox" />
                   <intent>
                       <action android:name="android.intent.action.MAIN" />
                       <category android:name="android.intent.category.LAUNCHER" />
@@ -2426,15 +2427,63 @@ jobs:
                   rebuild()
               }
 
+              // Janela de opções própria: cores, tamanho e espaçamento fixos (nada é cortado)
               private fun showMenu(title: String, build: OptionList.() -> Unit) {
                   val o = OptionList()
                   o.build()
-                  val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
-                      .setTitle(title)
-                      .setItems(o.titles.toTypedArray()) { _, i -> o.actions[i]() }
-                      .create()
+                  val dark = Cfg.s("tint") == "dark"
+                  val fg = if (dark) Color.WHITE else 0xFF1C1C1E.toInt()
+                  val sub = if (dark) 0x99FFFFFF.toInt() else 0x66000000
+                  val dlg = AlertDialog.Builder(this).create()
+
+                  val panel = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(if (dark) 0xF21C1C1E.toInt() else 0xF7FFFFFF.toInt(), dp(20))
+                      setPadding(0, dp(18), 0, dp(8))
+                  }
+                  panel.addView(TextView(this).apply {
+                      text = title
+                      textSize = 18f
+                      typeface = Fonts.bold()
+                      setTextColor(fg)
+                      gravity = Gravity.CENTER
+                      maxLines = 2
+                      ellipsize = TextUtils.TruncateAt.END
+                      setPadding(dp(22), 0, dp(22), dp(12))
+                  }, LinearLayout.LayoutParams(MATCH, WRAP))
+
+                  val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  for (i in o.titles.indices) {
+                      if (i > 0) {
+                          list.addView(View(this).apply { setBackgroundColor(sub) },
+                              LinearLayout.LayoutParams(MATCH, 1).apply { leftMargin = dp(22) })
+                      }
+                      list.addView(TextView(this).apply {
+                          text = o.titles[i]
+                          textSize = 17f
+                          typeface = Fonts.regular()
+                          setTextColor(fg)
+                          gravity = Gravity.CENTER_VERTICAL
+                          minHeight = dp(54)
+                          setPadding(dp(22), dp(12), dp(22), dp(12))
+                          setOnClickListener {
+                              dlg.dismiss()
+                              o.actions[i]()
+                          }
+                      }, LinearLayout.LayoutParams(MATCH, WRAP))
+                  }
+                  val sv = ScrollView(this).apply { isVerticalScrollBarEnabled = false }
+                  sv.addView(list, FrameLayout.LayoutParams(MATCH, WRAP))
+                  panel.addView(sv, LinearLayout.LayoutParams(MATCH, WRAP))
+                  sv.post {
+                      val maxH = (resources.displayMetrics.heightPixels * 0.62f).toInt()
+                      if (sv.height > maxH) sv.layoutParams = LinearLayout.LayoutParams(MATCH, maxH)
+                  }
+
+                  dlg.setView(panel)
                   dlg.show()
-                  dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+                  dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+                  dlg.window?.setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), WRAP)
               }
 
               private fun appMenu(pkg: String, where: Where, folder: Entry.Folder? = null) {
@@ -3833,16 +3882,25 @@ jobs:
                   }
               }
 
+              // Abre o Google Lens: primeiro pelo app do Google, depois pelo site lens.google.com
               private fun startLensSearch() {
-                  val tries = listOf("googleapp://lens", "google://lens", "https://lens.google.com/")
-                  for (u in tries) {
-                      try {
-                          startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                          return
-                      } catch (_: Exception) {
+                  val pm = packageManager
+                  val gapp = "com.google.android.googlequicksearchbox"
+                  val attempts = listOf(
+                      Intent(Intent.ACTION_VIEW, Uri.parse("googleapp://lens")).setPackage(gapp),
+                      Intent(Intent.ACTION_VIEW, Uri.parse("https://lens.google.com/")).setPackage(gapp),
+                      Intent(Intent.ACTION_VIEW, Uri.parse("https://lens.google.com/"))
+                  )
+                  for (i in attempts) {
+                      if (i.resolveActivity(pm) != null) {
+                          try {
+                              startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                              return
+                          } catch (_: Exception) {
+                          }
                       }
                   }
-                  Toast.makeText(this, "Pesquisa por imagem não disponível neste celular", Toast.LENGTH_LONG).show()
+                  Toast.makeText(this, "Nenhum app para pesquisa por imagem foi encontrado", Toast.LENGTH_LONG).show()
               }
 
               private fun webSearch(q: String) {
@@ -4034,63 +4092,61 @@ jobs:
               }
 
               // Cada skin tem um dock com formato proprio
+              // Cada estilo de dock tem forma, cor, margem e altura próprias
               private fun styleDock() {
                   val style = Cfg.s("dockStyle")
+                  val dark = Cfg.s("tint") == "dark"
                   val a = Cfg.i("dockAlpha")
                   val r = dp(Cfg.i("dockRadius")).toFloat()
                   val d = GradientDrawable()
-                  var ml = 8
-                  var mr = 8
-                  var mb = 6
-                  var padTop = 12
-                  var padBottom = 12
+                  var ml = 10
+                  var mr = 10
+                  var mb = 8
+                  var pad = 10
+                  var elev = 0f
                   when (style) {
                       "none" -> {
+                          // One UI: sem fundo, os ícones flutuam sobre o papel de parede
                           d.setColor(Color.TRANSPARENT)
-                          ml = 12
-                          mr = 12
-                          mb = 4
-                          padTop = 8
-                          padBottom = 8
+                          ml = 6; mr = 6; mb = 4; pad = 4
                       }
                       "capsule" -> {
-                          d.setColor(glass(a))
-                          d.cornerRadius = dp(44).toFloat()
-                          d.setStroke(dp(1), Color.argb(70, 255, 255, 255))
-                          ml = 16
-                          mr = 16
-                          mb = 10
+                          // HyperOS / Motorola: cápsula clara e flutuante
+                          d.setColor(if (dark) Color.argb(230, 40, 40, 46) else Color.argb(Math.max(a, 80) * 255 / 100, 255, 255, 255))
+                          d.cornerRadius = dp(60).toFloat()
+                          d.setStroke(dp(1), Color.argb(50, 0, 0, 0))
+                          ml = 18; mr = 18; mb = 12; pad = 12
+                          elev = dp(6).toFloat()
                       }
                       "flush" -> {
-                          d.setColor(glass(a))
+                          // MIUI / Android clássico: barra inteira, rente à borda de baixo
+                          d.setColor(if (dark) Color.argb(235, 20, 20, 24) else Color.argb(Math.max(a, 85) * 255 / 100, 245, 245, 247))
                           d.cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
-                          ml = 0
-                          mr = 0
-                          mb = 0
-                          padBottom = 16
+                          d.setStroke(dp(1), Color.argb(40, 128, 128, 128))
+                          ml = 0; mr = 0; mb = 0; pad = 14
                       }
                       "dark" -> {
-                          d.setColor(Color.argb(a * 255 / 100, 18, 18, 22))
+                          // POCO / Razer: bloco escuro sólido com contorno fino
+                          d.setColor(Color.argb(Math.max(a, 75) * 255 / 100, 14, 14, 18))
                           d.cornerRadius = r
-                          d.setStroke(dp(1), Color.argb(46, 255, 255, 255))
-                          ml = 10
-                          mr = 10
-                          mb = 8
+                          d.setStroke(dp(1), Color.argb(70, 255, 255, 255))
+                          ml = 12; mr = 12; mb = 10; pad = 10
                       }
                       else -> {
-                          d.setColor(glass(a))
+                          // iPhone: vidro translúcido arredondado
+                          d.setColor(if (dark) Color.argb(a * 255 / 100, 0, 0, 0) else Color.argb(a * 255 / 100, 255, 255, 255))
                           d.cornerRadius = r
-                          if (Cfg.s("tint") != "dark") d.setStroke(dp(1), Color.argb(60, 255, 255, 255))
+                          d.setStroke(dp(1), Color.argb(70, 255, 255, 255))
+                          ml = 10; mr = 10; mb = 8; pad = 12
                       }
                   }
                   dock.background = d
+                  dock.elevation = elev
                   dockMarginPx = dp(ml) + dp(mr)
-                  dock.setPadding(dp(8), dp(padTop), dp(8), dp(padBottom))
-                  if (style != dockStyleApplied) {
-                      dockStyleApplied = style
-                      dock.layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
-                          setMargins(dp(ml), 0, dp(mr), dp(mb))
-                      }
+                  dock.setPadding(dp(8), dp(pad), dp(8), dp(pad))
+                  dockStyleApplied = style
+                  dock.layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                      setMargins(dp(ml), 0, dp(mr), dp(mb))
                   }
               }
 
