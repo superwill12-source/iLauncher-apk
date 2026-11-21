@@ -794,6 +794,7 @@ jobs:
           import android.graphics.drawable.AdaptiveIconDrawable
           import android.graphics.drawable.Drawable
           import android.os.Build
+          import android.util.LruCache
           import java.text.SimpleDateFormat
           import java.util.Calendar
           import java.util.Date
@@ -801,10 +802,15 @@ jobs:
 
           object Icons {
 
+              // Cache de bitmaps já desenhados. Reaproveita o ícone sempre que a tela é reconstruída.
+              val memo = object : LruCache<String, Bitmap>(12 * 1024) {
+                  override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount / 1024
+              }
+
               fun build(label: String, pkg: String, base: Drawable): Drawable {
                   val st = Cfg.s("iconSet")
                   val kind = if (pkg == "ilauncher.skins") "skins" else if (st == "original") "default" else kindOf(label, pkg)
-                  return IosIcon(kind, base, Cfg.s("shape"), st)
+                  return IosIcon(kind, base, Cfg.s("shape"), st, "$pkg|$st|${Cfg.s("shape")}|$kind")
               }
 
               fun shapePath(size: Float, shape: String): Path {
@@ -864,7 +870,8 @@ jobs:
               private val kind: String,
               private val base: Drawable,
               private val shape: String = "squircle",
-              private val iconSet: String = "ios"
+              private val iconSet: String = "ios",
+              private val key: String = ""
           ) : Drawable() {
 
               private val oneui get() = iconSet == "oneui"
@@ -875,7 +882,7 @@ jobs:
               private val razer get() = iconSet == "razer"
 
 
-              private val SIZE = 192
+              private val SIZE = 144
               private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
               @Volatile
@@ -892,9 +899,17 @@ jobs:
 
               // Pode ser chamado fora da thread principal para pre-renderizar o icone
               fun prepare() {
-                  val r = render()
+                  val r = renderShared()
                   cache = r
                   cacheStamp = stamp()
+              }
+
+              private fun renderShared(): Bitmap {
+                  if (key.isEmpty() || stamp() != 0L) return render()
+                  Icons.memo.get(key)?.let { return it }
+                  val r = render()
+                  Icons.memo.put(key, r)
+                  return r
               }
 
               override fun draw(canvas: Canvas) {
@@ -903,7 +918,7 @@ jobs:
                   val b = if (cached != null && st == cacheStamp) {
                       cached
                   } else {
-                      val r = render()
+                      val r = renderShared()
                       cache = r
                       cacheStamp = st
                       r
@@ -916,7 +931,7 @@ jobs:
                   val owner = this
                   return object : Drawable.ConstantState() {
                       override fun newDrawable(): Drawable {
-                          val d = IosIcon(owner.kind, owner.base, owner.shape, owner.iconSet)
+                          val d = IosIcon(owner.kind, owner.base, owner.shape, owner.iconSet, owner.key)
                           d.cache = owner.cache
                           d.cacheStamp = owner.cacheStamp
                           return d
@@ -998,6 +1013,7 @@ jobs:
                   val p = Paint(Paint.ANTI_ALIAS_FLAG)
                   p.shader = BitmapShader(raw, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
                   oc.drawPath(Icons.shapePath(SIZE.toFloat(), shape), p)
+                  raw.recycle()
                   return out
               }
 
@@ -1854,7 +1870,11 @@ jobs:
                   column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
 
                   pager = ViewPager2(this)
-                  (pager.getChildAt(0) as? RecyclerView)?.overScrollMode = View.OVER_SCROLL_NEVER
+                  (pager.getChildAt(0) as? RecyclerView)?.apply {
+                      overScrollMode = View.OVER_SCROLL_NEVER
+                      clipChildren = true
+                  }
+                  pager.clipChildren = true
                   pager.adapter = PageAdapter()
                   pager.offscreenPageLimit = 1
                   applyPageTransformer()
@@ -4078,9 +4098,12 @@ jobs:
                               page.alpha = 1f - 0.35f * a
                           }
                           "cube" -> {
+                              // Câmera longe da página: sem distorção. Giro suave e borda fixa.
+                              page.cameraDistance = 20000f * resources.displayMetrics.density
                               page.pivotX = if (position < 0) page.width.toFloat() else 0f
-                              page.rotationY = -60f * position.coerceIn(-1f, 1f)
-                              page.alpha = 1f - 0.2f * a
+                              page.pivotY = page.height / 2f
+                              page.rotationY = -30f * position.coerceIn(-1f, 1f)
+                              page.alpha = 1f - 0.15f * a
                           }
                           "fade" -> {
                               page.scaleX = 1f; page.scaleY = 1f
