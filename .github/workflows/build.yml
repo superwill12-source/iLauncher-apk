@@ -5043,13 +5043,7 @@ jobs:
               }
           }
           EOF_FILE
-          cat > proj/app/src/main/java/com/ioslauncher/BuildInfo.kt <<'EOF_FILE'
-          package com.ioslauncher
-
-          object BuildInfo {
-              const val BUILD = "${{ github.run_number }}"
-          }
-          EOF_FILE
+          printf 'package com.ioslauncher\n\nobject BuildInfo {\n    const val BUILD = "%s"\n}\n' "$GITHUB_RUN_NUMBER" > proj/app/src/main/java/com/ioslauncher/BuildInfo.kt
 
       - name: Compilar APK
         working-directory: proj
