@@ -3412,7 +3412,10 @@ jobs:
                   val search = searchField("Biblioteca de Apps")
                   root.addView(search, LinearLayout.LayoutParams(MATCH, WRAP))
 
-                  val tileW = (resources.displayMetrics.widthPixels - dp(32) - dp(14)) / 2
+                  // 3 colunas: cabe toda a biblioteca na tela sem precisar rolar
+                  val libCols = if (CATEGORIES.count { cat -> sorted.any { it.category == cat } } > 4) 3 else 2
+                  val gapW = dp(10)
+                  val tileW = (resources.displayMetrics.widthPixels - dp(32) - gapW * (libCols - 1)) / libCols
                   val scroll = ScrollView(this)
                   scroll.isVerticalScrollBarEnabled = false
                   val grid = LinearLayout(this).apply {
@@ -3423,14 +3426,18 @@ jobs:
 
                   val groups = sorted.groupBy { it.category }
                   val tiles = CATEGORIES.filter { groups.containsKey(it) }
-                  for (i in tiles.indices step 2) {
+                  for (i in tiles.indices step libCols) {
                       val r = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                      r.addView(categoryTile(tiles[i], groups[tiles[i]]!!, tileW))
-                      if (i + 1 < tiles.size) {
-                          r.addView(
-                              categoryTile(tiles[i + 1], groups[tiles[i + 1]]!!, tileW),
-                              LinearLayout.LayoutParams(tileW, WRAP).apply { leftMargin = dp(14) }
-                          )
+                      for (j in 0 until libCols) {
+                          val k = i + j
+                          if (k < tiles.size) {
+                              r.addView(
+                                  categoryTile(tiles[k], groups[tiles[k]]!!, tileW),
+                                  LinearLayout.LayoutParams(tileW, WRAP).apply { if (j > 0) leftMargin = gapW }
+                              )
+                          } else {
+                              r.addView(View(this), LinearLayout.LayoutParams(tileW, WRAP).apply { if (j > 0) leftMargin = gapW })
+                          }
                       }
                       grid.addView(r)
                   }
