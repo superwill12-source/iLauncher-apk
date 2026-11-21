@@ -3898,4 +3898,1174 @@ jobs:
                           Weather.updated = System.currentTimeMillis()
                           Weather.save(applicationContext)
                           runOnUiThread { onWeatherUpdated() }
-                      } catch 
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun onWeatherUpdated() {
+                  updateTemp()
+                  if (todayOn()) pager.adapter?.notifyItemChanged(0)
+                  if (headerActive()) pager.adapter?.notifyItemChanged(firstHome())
+              }
+
+              private fun startVoiceSearch() {
+                  val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                  i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+                  i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Fale o que deseja pesquisar")
+                  try {
+                      startActivityForResult(i, 66)
+                  } catch (_: Exception) {
+                      Toast.makeText(this, "Pesquisa por voz não disponível neste celular", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              // Abre o Google Lens: primeiro pelo app do Google, depois pelo site lens.google.com
+              private fun startLensSearch() {
+                  val pm = packageManager
+                  val gapp = "com.google.android.googlequicksearchbox"
+                  val attempts = listOf(
+                      Intent(Intent.ACTION_VIEW, Uri.parse("googleapp://lens")).setPackage(gapp),
+                      Intent(Intent.ACTION_VIEW, Uri.parse("https://lens.google.com/")).setPackage(gapp),
+                      Intent(Intent.ACTION_VIEW, Uri.parse("https://lens.google.com/"))
+                  )
+                  for (i in attempts) {
+                      if (i.resolveActivity(pm) != null) {
+                          try {
+                              startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                              return
+                          } catch (_: Exception) {
+                          }
+                      }
+                  }
+                  Toast.makeText(this, "Nenhum app para pesquisa por imagem foi encontrado", Toast.LENGTH_LONG).show()
+              }
+
+              private fun webSearch(q: String) {
+                  try {
+                      startActivity(
+                          Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/search?q=" + Uri.encode(q)))
+                              .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                      )
+                      closeSearch()
+                  } catch (_: Exception) {
+                  }
+              }
+
+              @Deprecated("Deprecated in Java")
+              override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+                  super.onActivityResult(requestCode, resultCode, data)
+                  if (requestCode == 66 && resultCode == RESULT_OK) {
+                      val text = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+                      if (!text.isNullOrBlank()) {
+                          if (searchOverlay != null) searchField?.setText(text) else openSearch(text)
+                      }
+                  }
+              }
+
+              // ---------- Resumo útil do dia (cartão do topo) ----------
+
+              private fun batteryInfo(): Pair<Int, Boolean> {
+                  val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+                  val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+                  val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
+                  val st = bi?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+                  val charging = st == BatteryManager.BATTERY_STATUS_CHARGING || st == BatteryManager.BATTERY_STATUS_FULL
+                  return Pair(if (level >= 0 && scale > 0) level * 100 / scale else 0, charging)
+              }
+
+              private fun freeStorage(): Float {
+                  return try {
+                      val sf = StatFs(Environment.getDataDirectory().path)
+                      sf.availableBlocksLong.toFloat() / sf.blockCountLong.toFloat()
+                  } catch (_: Exception) {
+                      1f
+                  }
+              }
+
+              private fun nextEvent(): String? {
+                  if (checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED) return null
+                  return try {
+                      val now = System.currentTimeMillis()
+                      val b = CalendarContract.Instances.CONTENT_URI.buildUpon()
+                      ContentUris.appendId(b, now)
+                      ContentUris.appendId(b, now + 24L * 3600L * 1000L)
+                      val cur = contentResolver.query(
+                          b.build(),
+                          arrayOf(
+                              CalendarContract.Instances.TITLE,
+                              CalendarContract.Instances.BEGIN,
+                              CalendarContract.Instances.ALL_DAY
+                          ),
+                          null, null, CalendarContract.Instances.BEGIN + " ASC"
+                      )
+                      var out: String? = null
+                      if (cur != null) {
+                          if (cur.moveToFirst()) {
+                              val title = cur.getString(0) ?: "Compromisso"
+                              val begin = cur.getLong(1)
+                              val allDay = cur.getInt(2) == 1
+                              out = if (allDay) {
+                                  "📅 Hoje: " + title
+                              } else {
+                                  "📅 " + java.text.SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(begin)) + " · " + title
+                              }
+                          }
+                          cur.close()
+                      }
+                      out
+                  } catch (_: Exception) {
+                      null
+                  }
+              }
+
+              private fun weatherLine(): String {
+                  if (!Weather.has()) return "Buscando o tempo da sua região..."
+                  return Weather.emoji(Weather.code, Weather.isDay) + " " + Weather.fmt(Weather.temp) + "° · " +
+                      Weather.describe(Weather.code) + " · máx " + Weather.fmt(Weather.max) + "° / mín " + Weather.fmt(Weather.min) + "°"
+              }
+
+              // Uma dica prática: compromisso, bateria, chuva, calor/frio, espaço ou carregamento
+              private fun tipLine(): String {
+                  if (Cfg.b("calendarBrief")) {
+                      val ev = nextEvent()
+                      if (ev != null) return ev
+                  }
+                  val (pct, charging) = batteryInfo()
+                  if (!charging && pct <= 20) return "🔋 Bateria em " + pct + "%: conecte o carregador."
+                  if (Weather.has()) {
+                      val code = Weather.code
+                      val rain = (code in 51..67) || (code in 80..82) || (code in 95..99)
+                      if (rain) return "☔ Vai chover hoje: leve um guarda-chuva."
+                      if (Weather.temp >= 32f) return "🥵 Calor forte: beba água e evite o sol do meio-dia."
+                      if (Weather.temp <= 14f) return "🧥 Está frio: leve um casaco."
+                  }
+                  if (freeStorage() < 0.10f) return "💾 Pouco espaço livre: apague arquivos ou apps."
+                  return if (charging) "🔌 Carregando: " + pct + "%." else "✅ Tudo certo por aqui."
+              }
+
+              private fun briefText(): String {
+                  if (!Weather.has()) return "Tenha um dia especial."
+                  return "Tenha um dia especial. " + Weather.describe(Weather.code) + ". Máxima de " +
+                      Weather.fmt(Weather.max) + "° e mínima de " + Weather.fmt(Weather.min) + "°."
+              }
+
+              // Transições só mudam escala, transparência e rotação. Nunca deslocam a página
+              // (deslocar a página soma com o próprio pager e faz a página vizinha aparecer por cima).
+              private fun applyPageTransformer() {
+                  if (!::pager.isInitialized) return
+                  val kind = transitionKind()
+                  if (!Cfg.b("animPage") || kind == "none") {
+                      pager.setPageTransformer(null)
+                      return
+                  }
+                  pager.setPageTransformer { page, position ->
+                      val a = Math.min(Math.abs(position), 1f)
+                      page.translationX = 0f
+                      page.translationY = 0f
+                      page.rotationY = 0f
+                      page.pivotX = page.width / 2f
+                      page.pivotY = page.height / 2f
+                      when (kind) {
+                          "slide" -> {
+                              page.scaleX = 1f; page.scaleY = 1f
+                              page.alpha = 1f - 0.25f * a
+                          }
+                          "zoom" -> {
+                              val sc = 1f - 0.12f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.35f * a
+                          }
+                          "cube" -> {
+                              page.pivotX = if (position < 0) page.width.toFloat() else 0f
+                              page.rotationY = -60f * position.coerceIn(-1f, 1f)
+                              page.alpha = 1f - 0.2f * a
+                          }
+                          "fade" -> {
+                              page.scaleX = 1f; page.scaleY = 1f
+                              page.alpha = 1f - a
+                          }
+                          "depth" -> {
+                              val sc = 1f - 0.1f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.5f * a
+                          }
+                          else -> {
+                              val sc = 1f - 0.06f * a
+                              page.scaleX = sc; page.scaleY = sc
+                              page.alpha = 1f - 0.5f * a
+                          }
+                      }
+                  }
+              }
+
+              // Estilo de transição: "auto" segue a skin
+              private fun transitionKind(): String {
+                  val t = Cfg.s("transition")
+                  if (t != "auto") return t
+                  return when (Cfg.s("skin")) {
+                      "oneui" -> "depth"
+                      "moto" -> "slide"
+                      "razer" -> "zoom"
+                      "miui", "hyperos", "poco" -> "cube"
+                      "classic" -> "fade"
+                      else -> "ios"
+                  }
+              }
+
+              private fun glass(pct: Int): Int {
+                  val a = pct.coerceIn(0, 100) * 255 / 100
+                  return if (Cfg.s("tint") == "dark") Color.argb(a, 0, 0, 0) else Color.argb(a, 255, 255, 255)
+              }
+
+              private fun buildBackdrop(): Drawable {
+                  val dimColor = ColorDrawable(Color.argb(Cfg.i("dim") * 255 / 100, 0, 0, 0))
+                  val wp: Drawable? = when (Cfg.s("wallpaper")) {
+                      "pink" -> SoftWallpaper.pink()
+                      "blue" -> SoftWallpaper.blue()
+                      "dark" -> SoftWallpaper.dark()
+                      "moto" -> SoftWallpaper.moto()
+                      "hyperos" -> SoftWallpaper.hyperos()
+                      "poco" -> SoftWallpaper.poco()
+                      "miui" -> SoftWallpaper.miui()
+                      else -> null
+                  }
+                  return if (wp == null) dimColor else LayerDrawable(arrayOf(wp, dimColor))
+              }
+
+              // Cada skin tem um dock com formato proprio
+              // Cada estilo de dock tem forma, cor, margem e altura próprias
+              // Cada estilo de dock tem forma, cor, brilho e margens próprios
+              private fun styleDock() {
+                  val style = Cfg.s("dockStyle")
+                  val dark = Cfg.s("tint") == "dark"
+                  val a = Cfg.i("dockAlpha")
+                  val r = dp(Cfg.i("dockRadius")).toFloat()
+                  val d = GradientDrawable()
+                  var ml = 10
+                  var mr = 10
+                  var mb = 8
+                  var pad = 10
+                  var elev = 0f
+                  when (style) {
+                      "none", "oneui" -> {
+                          d.setColor(Color.TRANSPARENT)
+                          ml = 6; mr = 6; mb = 4; pad = 4
+                      }
+                      "hyperos", "capsule" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = if (dark) intArrayOf(0xF0262630.toInt(), 0xF0141419.toInt())
+                              else intArrayOf(0xF7FFFFFF.toInt(), 0xE8E6ECF5.toInt())
+                          d.cornerRadius = dp(60).toFloat()
+                          d.setStroke(dp(1), Color.argb(40, 0, 0, 0))
+                          ml = 18; mr = 18; mb = 12; pad = 12
+                          elev = dp(8).toFloat()
+                      }
+                      "moto" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = intArrayOf(0xEE2A2F3A.toInt(), 0xEE10131A.toInt())
+                          d.cornerRadius = dp(24).toFloat()
+                          d.setStroke(dp(2), 0xFF33B5FF.toInt())
+                          ml = 14; mr = 14; mb = 12; pad = 12
+                          elev = dp(4).toFloat()
+                      }
+                      "razer", "dark" -> {
+                          d.setColor(0xFF0A0A0A.toInt())
+                          d.cornerRadius = dp(14).toFloat()
+                          d.setStroke(dp(2), 0xFF44D62C.toInt())
+                          ml = 10; mr = 10; mb = 10; pad = 10
+                          elev = dp(10).toFloat()
+                      }
+                      "miui", "flush" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = intArrayOf(0xFAF7F7FA.toInt(), 0xFAE4E6EC.toInt())
+                          d.cornerRadii = floatArrayOf(dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), dp(20).toFloat(), 0f, 0f, 0f, 0f)
+                          d.setStroke(dp(1), 0x44FF8A00)
+                          ml = 0; mr = 0; mb = 0; pad = 16
+                          elev = dp(6).toFloat()
+                      }
+                      "poco" -> {
+                          d.orientation = GradientDrawable.Orientation.TOP_BOTTOM
+                          d.colors = intArrayOf(0xF22C2C35.toInt(), 0xF217171C.toInt())
+                          d.cornerRadius = dp(26).toFloat()
+                          d.setStroke(dp(1), 0x99FFD400.toInt())
+                          ml = 12; mr = 12; mb = 10; pad = 12
+                          elev = dp(6).toFloat()
+                      }
+                      "classic" -> {
+                          d.setColor(if (dark) 0xFF1C1C20.toInt() else 0xFFF0F0F2.toInt())
+                          d.cornerRadius = 0f
+                          d.setStroke(dp(1), 0xFFC8C8CC.toInt())
+                          ml = 0; mr = 0; mb = 0; pad = 10
+                      }
+                      else -> {
+                          // iPhone: vidro translúcido arredondado
+                          d.setColor(if (dark) Color.argb(a * 255 / 100, 0, 0, 0) else Color.argb(a * 255 / 100, 255, 255, 255))
+                          d.cornerRadius = r
+                          d.setStroke(dp(1), Color.argb(70, 255, 255, 255))
+                          ml = 10; mr = 10; mb = 8; pad = 12
+                      }
+                  }
+                  dock.background = d
+                  dock.elevation = elev
+                  dockMarginPx = dp(ml) + dp(mr)
+                  dock.setPadding(dp(8), dp(pad), dp(8), dp(pad))
+                  dockStyleApplied = style
+                  dock.layoutParams = LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                      setMargins(dp(ml), 0, dp(mr), dp(mb))
+                  }
+              }
+
+              // Completa o dock quando a skin tem mais espaços
+              private fun fillDock() {
+                  val max = Cfg.i("dockMax")
+                  val prefer = listOf("phone", "messages", "browser", "camera", "photos", "contacts", "mail", "settings")
+                  for (kind in prefer) {
+                      if (dockPkgs.size >= max) break
+                      val a = sorted.firstOrNull {
+                          it.pkg != SKINS_PKG && it.pkg !in dockPkgs && Icons.kindOf(it.label, it.pkg) == kind
+                      } ?: continue
+                      removeFromHome(a.pkg)
+                      hidden.remove(a.pkg)
+                      dockPkgs.add(a.pkg)
+                  }
+              }
+
+              private fun styleChrome() {
+                  val bar = Cfg.s("pillStyle") == "bar"
+                  val dark = Cfg.s("tint") == "dark"
+                  styleDock()
+                  dots.visibility = if (Cfg.b("dots") && pageCount() > 1) View.VISIBLE else View.GONE
+                  content.background = buildBackdrop()
+
+                  pill.text = "🔍  Pesquisar"
+                  pill.textSize = 13f
+                  pill.gravity = Gravity.CENTER
+                  pill.setTextColor(Color.WHITE)
+                  pill.background = rounded(glass(25), dp(16))
+                  pill.setPadding(dp(18), dp(6), dp(18), dp(6))
+                  pill.layoutParams = LinearLayout.LayoutParams(WRAP, dp(32)).apply {
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      bottomMargin = dp(10)
+                  }
+                  searchBar.background = rounded(if (dark) 0xE61C1C1E.toInt() else 0xF2FFFFFF.toInt(), dp(24))
+                  searchBar.layoutParams = LinearLayout.LayoutParams(MATCH, dp(46)).apply {
+                      setMargins(dp(14), dp(8), dp(14), dp(6))
+                  }
+
+                  // Ordem: One UI = busca, bolinhas, dock | iOS = bolinhas, busca, dock
+                  if (chromeBar != bar) {
+                      chromeBar = bar
+                      column.removeView(pill)
+                      column.removeView(searchBar)
+                      column.removeView(barRow)
+                      if (bar) {
+                          column.addView(searchBar, 1)
+                          column.addView(barRow, 2)
+                      } else {
+                          column.addView(barRow, 1)
+                          column.addView(pill, 2)
+                      }
+                  }
+                  val menu = View.OnLongClickListener {
+                      haptic(it)
+                      openHomeMenu()
+                      true
+                  }
+                  dock.setOnDragListener { v, ev ->
+                      when (ev.action) {
+                          DragEvent.ACTION_DRAG_STARTED -> dragEntry != null || dragDockPkg != null
+                          DragEvent.ACTION_DROP -> {
+                              val d = dragEntry
+                              val dk = dragDockPkg
+                              val x = ev.x
+                              v.post { dropOnDock(d, dk, x) }
+                              true
+                          }
+                          DragEvent.ACTION_DRAG_ENDED -> {
+                              endDrag()
+                              true
+                          }
+                          else -> true
+                      }
+                  }
+                  barRow.setOnLongClickListener(menu)
+                  dots.setOnLongClickListener(menu)
+                  dock.setOnLongClickListener(menu)
+                  updateGear()
+                  updatePill()
+                  updateTemp()
+                  buildDock()
+              }
+
+              private fun cfgChanged(key: String) {
+                  cfgStamp = System.currentTimeMillis()
+                  Fonts.style = Cfg.s("font")
+                  applyPageTransformer()
+                  if (key == "calendarBrief" && Cfg.b("calendarBrief") &&
+                      checkSelfPermission(Manifest.permission.READ_CALENDAR) != PackageManager.PERMISSION_GRANTED
+                  ) {
+                      requestPermissions(arrayOf(Manifest.permission.READ_CALENDAR), 78)
+                  }
+                  if (key == "weather") {
+                      updateTemp()
+                      refreshWeather(true)
+                  }
+                  if (key == "shape" || key == "iconSet" || key == "skin") {
+                      signature = ""
+                      refresh()
+                  }
+                  if (key == "dockMax" || key == "skin") {
+                      while (dockPkgs.size > Cfg.i("dockMax")) {
+                          val p = dockPkgs.removeAt(dockPkgs.size - 1)
+                          placeNew(p)
+                      }
+                      fillDock()
+                      normalize()
+                      saveAll()
+                  }
+                  styleChrome()
+                  rebuild()
+                  content.post { applyGrid() }
+                  if (key == "today" || key == "library" || key == "skin") {
+                      pager.setCurrentItem(firstHome(), false)
+                  }
+                  if (key == "skin") settingsList?.let { buildSettings(it) }
+              }
+
+              private fun organizeByCategory() {
+                  val l = mutableListOf<Entry>()
+                  if (apps.containsKey(SKINS_PKG) && SKINS_PKG !in dockPkgs && SKINS_PKG !in hidden) {
+                      l.add(Entry.App(SKINS_PKG))
+                  }
+                  val groups = sorted
+                      .filter { it.pkg != SKINS_PKG && it.pkg !in dockPkgs && it.pkg !in hidden }
+                      .groupBy { it.category }
+                  for (cat in CATEGORIES) {
+                      val g = groups[cat] ?: continue
+                      if (g.size >= 2) {
+                          l.add(Entry.Folder(cat, g.map { it.pkg }.toMutableList()))
+                      } else {
+                          l.add(Entry.App(g[0].pkg))
+                      }
+                  }
+                  for ((cat, g) in groups) {
+                      if (cat !in CATEGORIES) {
+                          for (a in g) l.add(Entry.App(a.pkg))
+                      }
+                  }
+                  home = l
+                  commit()
+              }
+
+              private fun openSkinPicker() {
+                  val cur = Cfg.s("skin")
+                  showMenu("Escolha a skin") {
+                      for ((id, name) in Cfg.SKINS) {
+                          add((if (id == cur) "✓ " else "") + name) {
+                              Cfg.applySkin(id)
+                              cfgChanged("skin")
+                          }
+                      }
+                      add("Mais ajustes...") { openSettings() }
+                  }
+              }
+
+              private fun isDefaultHome(): Boolean {
+                  val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                  val ri = packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)
+                  return ri?.activityInfo?.packageName == packageName
+              }
+
+              private fun openDefaultAppsSettings() {
+                  val actions = listOf(
+                      Settings.ACTION_HOME_SETTINGS,
+                      Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS,
+                      Settings.ACTION_SETTINGS
+                  )
+                  for (a in actions) {
+                      try {
+                          startActivity(Intent(a))
+                          return
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun requestDefaultHome() {
+                  try {
+                      if (Build.VERSION.SDK_INT >= 29) {
+                          val rm = getSystemService(RoleManager::class.java)
+                          if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_HOME)) {
+                              if (rm.isRoleHeld(RoleManager.ROLE_HOME)) {
+                                  Toast.makeText(this, "O iLauncher já é o launcher padrão", Toast.LENGTH_SHORT).show()
+                              } else {
+                                  startActivityForResult(rm.createRequestRoleIntent(RoleManager.ROLE_HOME), 55)
+                              }
+                              return
+                          }
+                      }
+                  } catch (_: Exception) {
+                  }
+                  openDefaultAppsSettings()
+              }
+
+              private fun askDefaultOnce(): Boolean {
+                  if (isDefaultHome()) return false
+                  val sp = getSharedPreferences("misc", MODE_PRIVATE)
+                  if (sp.getBoolean("askedHome", false)) return false
+                  sp.edit().putBoolean("askedHome", true).apply()
+                  val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                      .setTitle("Usar como tela inicial?")
+                      .setMessage("Para o iLauncher aparecer ao apertar o botão Home, defina-o como launcher padrão. Para voltar ao launcher anterior (Samsung, Xiaomi...), use Ajustes do iLauncher → \"Voltar ao launcher anterior\".")
+                      .setPositiveButton("Definir agora") { _, _ -> requestDefaultHome() }
+                      .setNegativeButton("Depois", null)
+                      .create()
+                  dlg.show()
+                  dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+                  return true
+              }
+
+              private fun openHomeMenu() {
+                  showMenu("Tela de Início") {
+                      add("Trocar skin") { openSkinPicker() }
+                      add("Editar Tela de Início") { setEditing(true) }
+                      add("Papéis de parede") {
+                          try {
+                              startActivity(Intent.createChooser(Intent(Intent.ACTION_SET_WALLPAPER), "Papel de parede"))
+                          } catch (_: Exception) {
+                          }
+                      }
+                      add("Ajustes do iLauncher") { openSettings() }
+                  }
+              }
+
+              // ---------- Tela de ajustes (engrenagem) ----------
+
+              private fun section(list: LinearLayout, title: String): LinearLayout {
+                  list.addView(TextView(this).apply {
+                      text = title
+                      textSize = 13f
+                      setTextColor(0xFF6D6D72.toInt())
+                      setPadding(dp(16), dp(22), 0, dp(6))
+                  }, LinearLayout.LayoutParams(MATCH, WRAP))
+                  val card = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      background = rounded(Color.WHITE, dp(12))
+                  }
+                  list.addView(card, LinearLayout.LayoutParams(MATCH, WRAP))
+                  return card
+              }
+
+              private fun rowBase(card: LinearLayout): LinearLayout {
+                  if (card.childCount > 0) {
+                      val sep = View(this)
+                      sep.setBackgroundColor(0xFFE5E5EA.toInt())
+                      card.addView(sep, LinearLayout.LayoutParams(MATCH, 1).apply { leftMargin = dp(16) })
+                  }
+                  val row = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      gravity = Gravity.CENTER_VERTICAL
+                      setPadding(dp(16), dp(12), dp(16), dp(12))
+                  }
+                  card.addView(row, LinearLayout.LayoutParams(MATCH, WRAP))
+                  return row
+              }
+
+              private fun rowTitle(t: String): TextView {
+                  return TextView(this).apply {
+                      text = t
+                      textSize = 16f
+                      typeface = Fonts.regular()
+                      setTextColor(Color.BLACK)
+                      maxLines = 2
+                      ellipsize = TextUtils.TruncateAt.END
+                  }
+              }
+
+              // Valor à direita: ocupa menos espaço que o título e corta com "..." se for longo
+              private fun rowValue(text: String): TextView {
+                  return TextView(this).apply {
+                      this.text = text
+                      textSize = 15f
+                      typeface = Fonts.regular()
+                      setTextColor(0xFF8E8E93.toInt())
+                      gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                      maxLines = 2
+                      ellipsize = TextUtils.TruncateAt.END
+                      setPadding(dp(12), 0, 0, 0)
+                  }
+              }
+
+              private fun rowToggle(card: LinearLayout, title: String, key: String) {
+                  val row = rowBase(card)
+                  row.addView(rowTitle(title), LinearLayout.LayoutParams(0, WRAP, 1f))
+                  val sw = Switch(this)
+                  sw.isChecked = Cfg.b(key)
+                  sw.setOnCheckedChangeListener { _, on ->
+                      Cfg.put(key, on)
+                      cfgChanged(key)
+                  }
+                  row.addView(sw)
+              }
+
+              private fun rowChoice(
+                  card: LinearLayout, title: String, key: String,
+                  options: List<Pair<String, String>>, onPick: ((String) -> Unit)? = null
+              ) {
+                  val row = rowBase(card)
+                  row.addView(rowTitle(title), LinearLayout.LayoutParams(0, WRAP, 1f))
+                  val cur = options.firstOrNull { it.first == Cfg.s(key) }?.second ?: ""
+                  val valueV = rowValue("$cur  ›")
+                  row.addView(valueV, LinearLayout.LayoutParams(0, WRAP, 1.6f))
+                  row.setOnClickListener {
+                      showMenu(title) {
+                          for ((v, label) in options) {
+                              add(label) {
+                                  if (onPick != null) {
+                                      onPick(v)
+                                  } else {
+                                      Cfg.put(key, v)
+                                      cfgChanged(key)
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+
+              private fun rowSeek(
+                  card: LinearLayout, title: String, key: String,
+                  min: Int, max: Int, suffix: String, zeroText: String? = null
+              ) {
+                  val row = rowBase(card)
+                  row.orientation = LinearLayout.VERTICAL
+                  row.gravity = Gravity.START
+                  fun fmt(v: Int): String = if (zeroText != null && v == 0) zeroText else "$v$suffix"
+                  val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                  val valueV = rowValue(fmt(Cfg.i(key)))
+                  head.addView(rowTitle(title), LinearLayout.LayoutParams(0, WRAP, 1f))
+                  head.addView(valueV, LinearLayout.LayoutParams(0, WRAP, 1.6f))
+                  row.addView(head, LinearLayout.LayoutParams(MATCH, WRAP))
+                  val sb = SeekBar(this)
+                  sb.max = max - min
+                  sb.progress = (Cfg.i(key) - min).coerceIn(0, max - min)
+                  sb.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                      override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                          valueV.text = fmt(p + min)
+                      }
+
+                      override fun onStartTrackingTouch(s: SeekBar?) {}
+
+                      override fun onStopTrackingTouch(s: SeekBar?) {
+                          Cfg.put(key, (s?.progress ?: 0) + min)
+                          cfgChanged(key)
+                      }
+                  })
+                  row.addView(sb, LinearLayout.LayoutParams(MATCH, WRAP))
+              }
+
+              private fun rowAction(card: LinearLayout, title: String, action: () -> Unit) {
+                  val row = rowBase(card)
+                  row.addView(TextView(this).apply {
+                      text = title
+                      textSize = 16f
+                      setTextColor(0xFF0A84FF.toInt())
+                  }, LinearLayout.LayoutParams(0, WRAP, 1f))
+                  row.setOnClickListener { action() }
+              }
+
+              private fun buildSettings(list: LinearLayout) {
+                  list.removeAllViews()
+
+                  var c = section(list, "SKIN (APARÊNCIA COMPLETA)")
+                  rowChoice(c, "Skin do launcher", "skin", Cfg.SKINS) { name ->
+                      Cfg.applySkin(name)
+                      cfgChanged("skin")
+                  }
+
+                  c = section(list, "ÍCONES")
+                  rowChoice(
+                      c, "Estilo dos ícones", "iconSet",
+                      listOf(
+                          "ios" to "Estilo iPhone (cores com gradiente)",
+                          "oneui" to "Estilo One UI (fundo claro, símbolo colorido)",
+                          "miui" to "Estilo Xiaomi (cor chapada, só contorno)",
+                          "poco" to "Estilo POCO (fundo escuro, símbolo brilhante)",
+                          "mono" to "Monocromático (silhuetas brancas)",
+                          "original" to "Ícones originais dos apps"
+                      )
+                  )
+                  rowChoice(
+                      c, "Formato", "shape",
+                      listOf(
+                          "squircle" to "Squircle (iOS)", "round" to "Quadrado arredondado",
+                          "circle" to "Círculo", "square" to "Quadrado"
+                      )
+                  )
+                  rowChoice(
+                      c, "Organização dos ícones", "gridMode",
+                      listOf(
+                          "compact" to "Automática (preenche os espaços, como no iPhone)",
+                          "free" to "Livre (cada ícone fica onde você deixar)"
+                      )
+                  )
+                  rowChoice(
+                      c, "Fonte dos textos", "font",
+                      listOf(
+                          "sans" to "Padrão do celular (sans)", "rounded" to "Arredondada (Motorola)",
+                          "mono" to "Monoespaçada (Razer)", "serif" to "Serifada (clássica)"
+                      )
+                  ) { v ->
+                      Cfg.put("font", v)
+                      cfgChanged("font")
+                  }
+                  rowSeek(c, "Tamanho do ícone", "iconSize", 50, 90, "%")
+                  rowSeek(c, "Colunas", "cols", 3, 6, "")
+                  rowSeek(c, "Linhas", "rows", 0, 8, "", "Automático")
+                  rowToggle(c, "Mostrar nomes dos apps", "labels")
+                  rowSeek(c, "Tamanho do nome", "labelSize", 9, 14, "")
+                  rowChoice(
+                      c, "Estilo das pastas", "folderStyle",
+                      listOf("grid3" to "3×3 (iOS)", "grid2" to "2×2 (One UI)")
+                  )
+
+                  c = section(list, "DOCK E BARRAS")
+                  rowToggle(c, "Mostrar dock", "dock")
+                  rowChoice(
+                      c, "Formato do dock", "dockStyle",
+                      listOf(
+                          "glass" to "Vidro arredondado (iPhone)", "none" to "Sem fundo (One UI)",
+                          "hyperos" to "Cápsula clara com sombra (HyperOS)", "moto" to "Grafite com contorno azul (Motorola)",
+                          "razer" to "Preto com borda verde neon (Razer)", "miui" to "Barra clara rente à borda (MIUI)",
+                          "poco" to "Grafite com linha amarela (POCO)", "classic" to "Barra plana (Android clássico)"
+                      )
+                  )
+                  rowSeek(c, "Arredondamento do dock", "dockRadius", 0, 40, "")
+                  rowChoice(
+                      c, "Estilo do painel de pastas", "panelStyle",
+                      listOf("ios" to "Vidro cinza (iOS)", "oneui" to "Cartão branco (One UI)")
+                  )
+                  rowSeek(c, "Apps no dock", "dockMax", 3, 6, "")
+                  rowSeek(c, "Transparência do dock", "dockAlpha", 0, 100, "%")
+                  rowChoice(c, "Cor do vidro", "tint", listOf("light" to "Claro", "dark" to "Escuro"))
+                  rowToggle(c, "Botão de pesquisa", "pill")
+                  rowChoice(
+                      c, "Estilo da pesquisa", "pillStyle",
+                      listOf("ios" to "Botão pequeno (iOS)", "bar" to "Barra larga (One UI)")
+                  )
+                  rowToggle(c, "Bolinhas das páginas", "dots")
+                  rowSeek(c, "Escurecer o fundo", "dim", 0, 60, "%")
+                  rowChoice(
+                      c, "Papel de parede do launcher", "wallpaper",
+                      listOf(
+                          "system" to "O do meu celular", "pink" to "Rosa (One UI)", "blue" to "Azul (iOS)",
+                          "dark" to "Escuro verde (Razer)", "moto" to "Azul noturno (Motorola)",
+                          "hyperos" to "Roxo e ciano (HyperOS)", "poco" to "Amarelo neon (POCO)",
+                          "miui" to "Pêssego claro (MIUI)"
+                      )
+                  )
+                  rowChoice(
+                      c, "Widgets no topo da tela inicial", "homeHeader",
+                      listOf(
+                          "none" to "Nenhum", "oneui" to "Resumo, temperatura e relógio (One UI)",
+                          "xiaomi" to "Relógio e tempo grandes (Xiaomi)"
+                      )
+                  )
+                  rowSeek(c, "Transparência das pastas", "folderAlpha", 0, 100, "%")
+                  rowToggle(c, "Mostrar atalho dos ajustes", "gear")
+                  rowChoice(
+                      c, "Aparência do atalho dos ajustes", "gearStyle",
+                      listOf("icon" to "Engrenagem", "text" to "Texto \"Skins\"")
+                  )
+                  rowToggle(c, "Temperatura na tela inicial", "tempHome")
+
+                  c = section(list, "PÁGINAS")
+                  rowToggle(c, "Página Hoje (Samsung Free)", "today")
+                  rowToggle(c, "Biblioteca de Apps", "library")
+                  rowToggle(c, "Relógio grande na página Hoje", "wClock")
+                  rowToggle(c, "Widget de calendário", "wCal")
+                  rowToggle(c, "Widget de bateria", "wBat")
+                  rowToggle(c, "Widget de armazenamento", "wSto")
+                  rowToggle(c, "Temperatura na página Hoje", "wTemp")
+
+                  c = section(list, "FUNÇÕES E GESTOS")
+                  rowToggle(c, "Deslizar para baixo abre a pesquisa", "swipeSearch")
+                  rowToggle(c, "Deslizar para cima abre a gaveta de apps", "drawerGesture")
+                  rowToggle(c, "Categorias na gaveta de apps", "drawerTabs")
+                  rowToggle(c, "Criar pasta arrastando app sobre app", "folders")
+                  rowToggle(c, "Ícones balançando ao editar", "wiggle")
+                  rowToggle(c, "Vibração ao segurar", "haptics")
+                  rowChoice(
+                      c, "Estilo das animações", "animStyle",
+                      listOf("ios" to "iPhone", "oneui" to "One UI (Samsung)", "miui" to "Xiaomi (MIUI/HyperOS)")
+                  )
+                  rowToggle(c, "Animação ao abrir apps", "animLaunch")
+                  rowToggle(c, "Animação ao tocar", "animPress")
+                  rowToggle(c, "Efeito ao trocar de página", "animPage")
+                  rowChoice(
+                      c, "Estilo da transição de página", "transition",
+                      listOf(
+                          "auto" to "Automático (conforme a skin)", "ios" to "iPhone (zoom leve)",
+                          "slide" to "Deslizar (Motorola)", "zoom" to "Zoom forte (Razer)",
+                          "cube" to "Cubo 3D (Xiaomi)", "depth" to "Profundidade (One UI)",
+                          "fade" to "Desvanecer", "none" to "Nenhum"
+                      )
+                  )
+
+                  c = section(list, "TEMPO E LOCALIZAÇÃO")
+                  rowToggle(c, "Mostrar temperatura do tempo (usa internet)", "weather")
+                  rowToggle(c, "Mostrar próximo compromisso do calendário", "calendarBrief")
+                  rowAction(c, "Atualizar temperatura agora") { refreshWeather(true) }
+                  rowAction(c, "Usar localização do GPS (mais precisa)") {
+                      if (hasLocPerm()) {
+                          Toast.makeText(this, "Já está ativado. Atualizando...", Toast.LENGTH_SHORT).show()
+                          refreshWeather(true)
+                      } else {
+                          askLocation()
+                      }
+                  }
+
+                  c = section(list, "AJUDA")
+                  rowAction(c, "Versão do launcher: build " + BuildInfo.BUILD) {
+                      Toast.makeText(this, "Build " + BuildInfo.BUILD + " (se for diferente do último do GitHub, instale o APK novo)", Toast.LENGTH_LONG).show()
+                  }
+                  rowAction(c, "Como usar o launcher") {
+                      val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
+                          .setTitle("Como usar")
+                          .setMessage(
+                              "• Segure um app: menu com opções\n" +
+                                  "• Segure um espaço vazio: abre os ajustes\n" +
+                                  "• Deslize para baixo (iPhone): pesquisa\n" +
+                                  "• Deslize para cima (One UI): gaveta de apps\n" +
+                                  "• Em modo de edição, arraste um app sobre outro para criar pasta\n" +
+                                  "• Toque na temperatura para atualizar"
+                          )
+                          .setPositiveButton("Entendi", null)
+                          .create()
+                      dlg.show()
+                      dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+                  }
+
+                  c = section(list, "GERENCIAR")
+                  rowAction(c, "Apps ocultos...") {
+                      val l = hidden.mapNotNull { apps[it] }
+                      if (l.isEmpty()) {
+                          Toast.makeText(this, "Nenhum app oculto", Toast.LENGTH_SHORT).show()
+                      } else {
+                          showMenu("Toque para mostrar de novo") {
+                              for (a in l) add(a.label) { addToHome(a.pkg) }
+                          }
+                      }
+                  }
+                  rowAction(c, "Arrumar espaços vazios (juntar os ícones)") {
+                      home.removeAll { it === Entry.Gap }
+                      commit()
+                  }
+                  rowAction(c, "Organizar em pastas por categoria") {
+                      showMenu("Isso refaz a tela inicial") {
+                          add("Organizar") { organizeByCategory() }
+                          add("Cancelar") {}
+                      }
+                  }
+                  rowAction(c, "Organizar apps em ordem alfabética") {
+                      showMenu("Isso desfaz as pastas") {
+                          add("Organizar") {
+                              val l = mutableListOf<Entry>()
+                              for (a in sorted) {
+                                  if (a.pkg !in dockPkgs && a.pkg !in hidden) l.add(Entry.App(a.pkg))
+                              }
+                              home = l
+                              commit()
+                          }
+                          add("Cancelar") {}
+                      }
+                  }
+                  rowAction(c, "Restaurar layout padrão") {
+                      showMenu("Apagar pastas, ordem e dock?") {
+                          add("Restaurar") {
+                              store.reset()
+                              syncLayout()
+                              rebuild()
+                          }
+                          add("Cancelar") {}
+                      }
+                  }
+                  rowAction(c, "Restaurar todos os ajustes") {
+                      Cfg.applySkin("ios")
+                      cfgChanged("skin")
+                  }
+                  rowAction(c, "Definir como launcher padrão") { requestDefaultHome() }
+                  rowAction(c, "Voltar ao launcher anterior (Samsung, Xiaomi...)") {
+                      Toast.makeText(this, "Escolha o app de Tela inicial na lista", Toast.LENGTH_LONG).show()
+                      openDefaultAppsSettings()
+                  }
+                  rowAction(c, "Ajustes do Android") {
+                      try {
+                          startActivity(Intent(Settings.ACTION_SETTINGS))
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              private fun openSettings() {
+                  if (settingsOverlay != null) return
+                  if (searchOverlay != null) closeSearch()
+                  if (groupOverlay != null) closeGroup()
+                  if (drawerOverlay != null) closeDrawer()
+
+                  val ov = FrameLayout(this)
+                  ov.setBackgroundColor(0xFFF2F2F7.toInt())
+                  ov.isClickable = true
+                  val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+                  val bar = FrameLayout(this)
+                  bar.addView(TextView(this).apply {
+                      text = "Ajustes do iLauncher"
+                      textSize = 18f
+                      typeface = Fonts.bold()
+                      setTextColor(Color.BLACK)
+                      gravity = Gravity.CENTER
+                  }, FrameLayout.LayoutParams(MATCH, WRAP, Gravity.CENTER))
+                  bar.addView(TextView(this).apply {
+                      text = "Concluído"
+                      textSize = 16f
+                      setTextColor(0xFF0A84FF.toInt())
+                      setPadding(dp(16), dp(14), dp(16), dp(14))
+                      setOnClickListener { closeSettings() }
+                  }, FrameLayout.LayoutParams(WRAP, WRAP, Gravity.END or Gravity.CENTER_VERTICAL))
+                  col.addView(bar, LinearLayout.LayoutParams(MATCH, dp(52)))
+
+                  val sv = ScrollView(this)
+                  val list = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(dp(16), 0, dp(16), dp(32))
+                  }
+                  sv.addView(list, FrameLayout.LayoutParams(MATCH, WRAP))
+                  settingsList = list
+                  buildSettings(list)
+                  col.addView(sv, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  ov.addView(col, FrameLayout.LayoutParams(MATCH, MATCH))
+                  content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
+                  settingsOverlay = ov
+                  ov.alpha = 0f
+                  ov.translationY = dp(40).toFloat()
+                  ov.animate().alpha(1f).translationY(0f).setDuration(220)
+                      .setInterpolator(DecelerateInterpolator()).start()
+              }
+
+              private fun closeSettings() {
+                  val ov = settingsOverlay ?: return
+                  settingsOverlay = null
+                  settingsList = null
+                  content.removeView(ov)
+                  styleChrome()
+                  rebuild()
+              }
+
+              // ---------- Gaveta de apps (deslizar para cima, estilo One UI) ----------
+
+              private fun drawerCell(a: AppItem, color: Int): View {
+                  val cell = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      setPadding(0, dp(8), 0, dp(4))
+                  }
+                  val iv = roundIcon(a.icon, iconPx)
+                  cell.addView(iv, LinearLayout.LayoutParams(iconPx, iconPx))
+                  if (Cfg.b("labels")) cell.addView(labelView(a.label, color), LinearLayout.LayoutParams(MATCH, WRAP))
+                  cell.setOnClickListener { launch(a, iv) }
+                  cell.setOnLongClickListener {
+                      haptic(it)
+                      appMenu(a.pkg, Where.LIBRARY)
+                      true
+                  }
+                  pressable(cell)
+                  return cell
+              }
+
+              private fun openDrawer() {
+                  if (drawerOverlay != null) return
+                  if (searchOverlay != null) closeSearch()
+                  if (groupOverlay != null) closeGroup()
+                  val dark = Cfg.s("tint") == "dark"
+                  val txt = if (dark) Color.WHITE else 0xFF1C1C1E.toInt()
+
+                  val ov = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(if (dark) 0xF0121212.toInt() else 0xF2F5F5F7.toInt())
+                      setPadding(dp(8), dp(8), dp(8), 0)
+                      isClickable = true
+                  }
+                  val handle = View(this)
+                  handle.background = rounded(if (dark) 0x66FFFFFF else 0x55000000, dp(3))
+                  handle.setOnClickListener { closeDrawer() }
+                  ov.addView(handle, LinearLayout.LayoutParams(dp(40), dp(5)).apply {
+                      gravity = Gravity.CENTER_HORIZONTAL
+                      topMargin = dp(6)
+                      bottomMargin = dp(10)
+                  })
+
+                  val et = EditText(this).apply {
+                      hint = "Pesquisar apps"
+                      setHintTextColor(if (dark) 0xAAFFFFFF.toInt() else 0x99000000.toInt())
+                      setTextColor(txt)
+                      isSingleLine = true
+                      inputType = InputType.TYPE_CLASS_TEXT
+                      setPadding(dp(18), dp(10), dp(18), dp(10))
+                      background = rounded(if (dark) 0x33FFFFFF else 0x14000000, dp(24))
+                  }
+                  ov.addView(et, LinearLayout.LayoutParams(MATCH, WRAP).apply {
+                      setMargins(dp(8), 0, dp(8), dp(8))
+                  })
+
+                  val sv = ScrollView(this)
+                  sv.isVerticalScrollBarEnabled = false
+                  val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                  sv.addView(grid, FrameLayout.LayoutParams(MATCH, WRAP))
+                  var cat = ""
+                  var query = ""
+                  fun fill() {
+                      grid.removeAllViews()
+                      var l: List<AppItem> = sorted
+                      if (cat.isNotEmpty()) l = l.filter { it.category == cat }
+                      if (query.isNotEmpty()) l = l.filter { it.label.contains(query, ignoreCase = true) }
+                      val n = COLS
+                      val cellW = resources.displayMetrics.widthPixels / n - dp(10)
+                      for (chunk in l.chunked(n)) {
+                          val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                          for (i in 0 until n) {
+                              val a = chunk.getOrNull(i)
+                              val slot = FrameLayout(this)
+                              if (a != null) {
+                                  slot.addView(
+                                      drawerCell(a, txt),
+                                      FrameLayout.LayoutParams(cellW, WRAP, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+                                  )
+                              }
+                              row.addView(slot, LinearLayout.LayoutParams(0, WRAP, 1f))
+                          }
+                          grid.addView(row)
+                      }
+                  }
+                  if (Cfg.b("drawerTabs")) {
+                      val hs = HorizontalScrollView(this)
+                      hs.isHorizontalScrollBarEnabled = false
+                      val chips = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                      hs.addView(chips, FrameLayout.LayoutParams(WRAP, WRAP))
+                      val names = listOf("") + CATEGORIES.filter { nm -> sorted.any { it.category == nm } }
+                      val chipViews = mutableListOf<TextView>()
+                      fun paintChips() {
+                          for (i in names.indices) {
+                              val on = names[i] == cat
+                              chipViews[i].setTextColor(if (on) (if (dark) Color.BLACK else Color.WHITE) else txt)
+                              chipViews[i].background = rounded(
+                                  if (on) txt else (if (dark) 0x33FFFFFF else 0x14000000), dp(16)
+                              )
+                          }
+                      }
+                      for (nm in names) {
+                          val chip = TextView(this).apply {
+                              text = if (nm.isEmpty()) "Todos" else nm
+                              textSize = 13f
+                              setPadding(dp(14), dp(7), dp(14), dp(7))
+                          }
+                          chip.setOnClickListener {
+                              cat = nm
+                              paintChips()
+                              fill()
+                          }
+                          chipViews.add(chip)
+                          chips.addView(chip, LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(8) })
+                      }
+                      paintChips()
+                      ov.addView(hs, LinearLayout.LayoutParams(MATCH, WRAP).apply { setMargins(dp(8), 0, dp(8), dp(8)) })
+                  }
+                  ov.addView(sv, LinearLayout.LayoutParams(MATCH, 0, 1f))
+                  fill()
+                  et.doAfterTextChanged {
+                      query = it?.toString().orEmpty().trim()
+                      fill()
+                  }
+
+                  content.addView(ov, FrameLayout.LayoutParams(MATCH, MATCH))
+                  ViewCompat.setOnApplyWindowInsetsListener(ov) { v, insets ->
+                      val sys = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+                      val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+                      v.setPadding(dp(8), dp(8), dp(8), Math.max(0, ime.bottom - sys.bottom))
+                      insets
+                  }
+                  drawerOverlay = ov
+                  drawerScroll = sv
+                  val h = if (content.height > 0) content.height.toFloat() else dp(600).toFloat()
+                  ov.translationY = h
+                  ov.animate().translationY(0f).setDuration(280)
+                      .setInterpolator(DecelerateInterpolator(1.4f)).start()
+              }
+
+              private fun closeDrawer() {
+                  val ov = drawerOverlay ?: return
+                  drawerOverlay = null
+                  drawerScroll = null
+                  hideKeyboard(ov)
+                  ov.animate().translationY(content.height.toFloat()).setDuration(220)
+                      .setInterpolator(DecelerateInterpolator())
+                      .withEndAction { content.removeView(ov) }
+                      .start()
+              }
+
+              // ================= Pager =================
+
+              private class VH(v: View) : RecyclerView.ViewHolder(v)
+
+              private inner class PageAdapter : RecyclerView.Adapter<VH>() {
+                  override fun getItemCount() = pageCount()
+                  override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+                      val f = FrameLayout(parent.context)
+                      f.layoutParams = ViewGroup.LayoutParams(MATCH, MATCH)
+                      return VH(f)
+                  }
+
+                  override fun onBindViewHolder(holder: VH, position: Int) {
+                      val f = holder.itemView as FrameLayout
+                      f.scaleX = 1f
+                      f.scaleY = 1f
+                      f.alpha = 1f
+                      f.removeAllViews()
+                      val page = when {
+                          todayOn() && position == 0 -> buildToday()
+                          libOn() && position == firstHome() + homePages.size -> buildLibrary()
+                          else -> buildHomePage(position - firstHome())
+                      }
+                      f.addView(page, FrameLayout.LayoutParams(MATCH, MATCH))
+                  }
+              }
+          }
+          EOF_FILE
+          cat > proj/app/src/main/java/com/ioslauncher/BuildInfo.kt <<'EOF_FILE'
+          package com.ioslauncher
+
+          object BuildInfo {
+              const val BUILD = "${{ github.run_number }}"
+          }
+          EOF_FILE
+
+      - name: Compilar APK
+        working-directory: proj
+        run: gradle assembleDebug --no-daemon
+
+      - name: Renomear APK
+        run: cp proj/app/build/outputs/apk/debug/app-debug.apk iLauncher.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iLauncher-APK
+          path: iLauncher.apk
+
+      - name: Publicar na aba Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: iLauncher v${{ github.run_number }}
+          files: iLauncher.apk
