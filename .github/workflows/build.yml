@@ -4466,7 +4466,24 @@ jobs:
                   return TextView(this).apply {
                       text = t
                       textSize = 16f
+                      typeface = Fonts.regular()
                       setTextColor(Color.BLACK)
+                      maxLines = 2
+                      ellipsize = TextUtils.TruncateAt.END
+                  }
+              }
+
+              // Valor à direita: ocupa menos espaço que o título e corta com "..." se for longo
+              private fun rowValue(text: String): TextView {
+                  return TextView(this).apply {
+                      this.text = text
+                      textSize = 15f
+                      typeface = Fonts.regular()
+                      setTextColor(0xFF8E8E93.toInt())
+                      gravity = Gravity.END or Gravity.CENTER_VERTICAL
+                      maxLines = 2
+                      ellipsize = TextUtils.TruncateAt.END
+                      setPadding(dp(12), 0, 0, 0)
                   }
               }
 
@@ -4489,28 +4506,21 @@ jobs:
                   val row = rowBase(card)
                   row.addView(rowTitle(title), LinearLayout.LayoutParams(0, WRAP, 1f))
                   val cur = options.firstOrNull { it.first == Cfg.s(key) }?.second ?: ""
-                  val valueV = TextView(this).apply {
-                      text = "$cur  ›"
-                      textSize = 15f
-                      setTextColor(0xFF8E8E93.toInt())
-                  }
-                  row.addView(valueV)
+                  val valueV = rowValue("$cur  ›")
+                  row.addView(valueV, LinearLayout.LayoutParams(0, WRAP, 1.6f))
                   row.setOnClickListener {
-                      val dlg = AlertDialog.Builder(this, android.R.style.Theme_Material_Light_Dialog_Alert)
-                          .setTitle(title)
-                          .setItems(options.map { it.second }.toTypedArray()) { _, i ->
-                              val v = options[i].first
-                              if (onPick != null) {
-                                  onPick(v)
-                              } else {
-                                  Cfg.put(key, v)
-                                  cfgChanged(key)
+                      showMenu(title) {
+                          for ((v, label) in options) {
+                              add(label) {
+                                  if (onPick != null) {
+                                      onPick(v)
+                                  } else {
+                                      Cfg.put(key, v)
+                                      cfgChanged(key)
+                                  }
                               }
-                              valueV.text = "${options[i].second}  ›"
                           }
-                          .create()
-                      dlg.show()
-                      dlg.window?.setBackgroundDrawable(rounded(0xF5FFFFFF.toInt(), dp(22)))
+                      }
                   }
               }
 
@@ -4523,13 +4533,9 @@ jobs:
                   row.gravity = Gravity.START
                   fun fmt(v: Int): String = if (zeroText != null && v == 0) zeroText else "$v$suffix"
                   val head = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                  val valueV = TextView(this).apply {
-                      textSize = 15f
-                      setTextColor(0xFF8E8E93.toInt())
-                      text = fmt(Cfg.i(key))
-                  }
+                  val valueV = rowValue(fmt(Cfg.i(key)))
                   head.addView(rowTitle(title), LinearLayout.LayoutParams(0, WRAP, 1f))
-                  head.addView(valueV)
+                  head.addView(valueV, LinearLayout.LayoutParams(0, WRAP, 1.6f))
                   row.addView(head, LinearLayout.LayoutParams(MATCH, WRAP))
                   val sb = SeekBar(this)
                   sb.max = max - min
